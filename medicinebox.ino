@@ -56,11 +56,11 @@ int alarmCount = 0;
 int nextAlarmId = 1;
 int takenCountToday = 0;
 
-// WiFi & System Config
+// WiFi & System Config (Locked to GMT+5:30 IST: 5h 30m = 19800 seconds)
 String savedSSID = "";
 String savedPass = "";
-long gmtOffset_sec = 19800; // Default GMT+5:30 IST
-int daylightOffset_sec = 0;
+const long gmtOffset_sec = 19800; // GMT+5:30 IST Offset (19,800 seconds)
+const int daylightOffset_sec = 0;
 const char* ntpServer = "pool.ntp.org";
 
 // System State
@@ -471,7 +471,6 @@ void setup() {
   preferences.begin("medbox", false);
   savedSSID = preferences.getString("ssid", "");
   savedPass = preferences.getString("pass", "");
-  gmtOffset_sec = preferences.getLong("gmtOffset", 19800);
 
   loadAlarmsFromNVS();
 
