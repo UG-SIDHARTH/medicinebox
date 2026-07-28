@@ -3,15 +3,12 @@
    ========================================================================== */
 
 // --- Global State ---
-let storedMode = localStorage.getItem('medbox_mode');
-if (!storedMode || storedMode === 'esp32') {
-  storedMode = 'cloud';
-  localStorage.setItem('medbox_mode', 'cloud');
-}
+// Force reset to 'cloud' mode to stop all 10.249.18.38 local IP requests
+localStorage.setItem('medbox_mode', 'cloud');
 
 let config = {
-  mode: storedMode, // Always default to 'cloud' for cross-network connectivity
-  espIp: localStorage.getItem('medbox_esp_ip') || '192.168.4.1',
+  mode: 'cloud', // Fixed to Cloud Sync Mode for cross-network operation
+  espIp: '192.168.4.1',
   pollInterval: 1000
 };
 
@@ -202,6 +199,7 @@ function initMqttCloudSync() {
       try {
         const data = JSON.parse(message.toString());
         if (topic === MQTT_TOPIC_TELEMETRY) {
+          console.log("📥 MQTT Telemetry Received from ESP32:", data);
           lastMqttTelemetryTime = Date.now();
           telemetry = data;
           updateTelemetryUI(data);
