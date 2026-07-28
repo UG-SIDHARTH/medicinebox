@@ -753,14 +753,28 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 void reconnectMQTT() {
   if (WiFi.status() != WL_CONNECTED) return;
   static unsigned long lastReconnectAttempt = 0;
-  if (millis() - lastReconnectAttempt > 5000) {
+  static int serverIndex = 0;
+  const char* servers[] = {"broker.emqx.io", "broker.hivemq.com"};
+
+  if (millis() - lastReconnectAttempt > 4000) {
     lastReconnectAttempt = millis();
+    const char* targetServer = servers[serverIndex % 2];
+    mqttClient.setServer(targetServer, 1883);
+
     String clientId = "ESP32MedBox-" + String(random(0xffff), HEX);
+    Serial.print("Connecting MQTT to ");
+    Serial.print(targetServer);
+    Serial.println("...");
+
     if (mqttClient.connect(clientId.c_str())) {
-      Serial.println("MQTT Connected to HiveMQ Cloud!");
+      Serial.println("✓ MQTT Connected successfully!");
       mqttClient.subscribe(mqtt_topic_commands);
       mqttClient.subscribe(mqtt_topic_alarms);
       publishStatusMQTT();
+    } else {
+      Serial.print("MQTT Connection Failed, state=");
+      Serial.println(mqttClient.state());
+      serverIndex++;
     }
   }
 }

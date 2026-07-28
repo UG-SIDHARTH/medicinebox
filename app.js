@@ -146,26 +146,34 @@ function initNetworkConnection() {
 let lastMqttTelemetryTime = 0;
 let cloudCheckInterval = null;
 
+const BROKER_ENDPOINTS = [
+  'wss://broker.emqx.io:8084/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt'
+];
+let brokerIndex = 0;
+
 function initMqttCloudSync() {
   if (typeof mqtt === 'undefined') {
     updateConnectionBadge(false, "MQTT Library Missing");
     return;
   }
 
+  const endpoint = BROKER_ENDPOINTS[brokerIndex % BROKER_ENDPOINTS.length];
   updateConnectionBadge(true, "Connecting Cloud...");
+  console.log("Connecting Web App to Cloud MQTT Broker:", endpoint);
 
   try {
-    mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+    mqttClient = mqtt.connect(endpoint, {
       clientId: 'web_dashboard_' + Math.random().toString(16).substr(2, 8),
       keepalive: 30,
-      reconnectPeriod: 3000
+      reconnectPeriod: 4000
     });
 
     if (cloudCheckInterval) clearInterval(cloudCheckInterval);
 
     mqttClient.on('connect', () => {
-      console.log("Connected to HiveMQ Cloud MQTT Broker!");
-      updateConnectionBadge(true, "Cloud Connected (Waiting for ESP32...)");
+      console.log("✓ Web Dashboard connected to MQTT Cloud:", endpoint);
+      updateConnectionBadge(true, "Cloud Connected (Waiting for ESP32)");
       mqttClient.subscribe(MQTT_TOPIC_TELEMETRY);
       mqttClient.subscribe(MQTT_TOPIC_ALARMS);
 
@@ -176,7 +184,7 @@ function initMqttCloudSync() {
           if (lastMqttTelemetryTime > 0 && timeDiff < 5000) {
             updateConnectionBadge(true, "Online (Cloud Sync)");
           } else if (lastMqttTelemetryTime > 0) {
-            updateConnectionBadge(false, "ESP32 Offline (Cloud)");
+            updateConnectionBadge(false, "ESP32 Offline (Check Wi-Fi)");
           } else {
             updateConnectionBadge(true, "Cloud Connected (Waiting for ESP32)");
           }
@@ -204,8 +212,11 @@ function initMqttCloudSync() {
     });
 
     mqttClient.on('error', (err) => {
-      console.error("MQTT Error:", err);
-      updateConnectionBadge(false, "Cloud Sync Error");
+      console.error("MQTT Error on endpoint", endpoint, err);
+      updateConnectionBadge(false, "Cloud Error - Retrying...");
+      try { mqttClient.end(); } catch (e) {}
+      brokerIndex++;
+      setTimeout(initMqttCloudSync, 3000);
     });
 
     mqttClient.on('offline', () => {
