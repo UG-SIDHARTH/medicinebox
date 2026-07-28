@@ -598,19 +598,21 @@ function closeConfigModal() {
 }
 
 function loadConfigToForm() {
-  document.getElementById('cfgMode').value = config.mode;
-  document.getElementById('cfgEspIp').value = config.espIp;
+  const modeEl = document.getElementById('cfgMode');
+  const ipEl = document.getElementById('cfgEspIp');
+  if (modeEl) modeEl.value = config.mode || 'cloud';
+  if (ipEl) ipEl.value = config.espIp || '192.168.4.1';
   toggleModeInputs();
 }
 
 function toggleModeInputs() {
-  const mode = document.getElementById('cfgMode').value;
+  const modeEl = document.getElementById('cfgMode');
   const ipGroup = document.getElementById('espIpGroup');
-  if (ipGroup) ipGroup.style.display = (mode === 'esp32') ? 'block' : 'none';
+  if (ipGroup) ipGroup.style.display = (modeEl && modeEl.value === 'esp32') ? 'block' : 'none';
 }
 
 async function saveConfigSubmit(e) {
-  e.preventDefault();
+  if (e && e.preventDefault) e.preventDefault();
   config.mode = 'cloud';
   localStorage.setItem('medbox_mode', 'cloud');
 
