@@ -15,21 +15,21 @@
   ===========================================================================
 */
 
-#include <WiFi.h>
-#include <WebServer.h>
-#include <Preferences.h>
-#include <LiquidCrystal_I2C.h>
 #include "time.h"
+#include <LiquidCrystal_I2C.h>
+#include <Preferences.h>
+#include <WebServer.h>
+#include <WiFi.h>
 
 // ==========================================
 // 1. HARDWARE PINS & PERIPHERALS
 // ==========================================
-const int buzzerPin   = 25;
-const int redLedPin   = 26;
+const int buzzerPin = 25;
+const int redLedPin = 26;
 const int greenLedPin = 27;
-const int trigPin     = 12;
-const int echoPin     = 14;
-const int buttonPin   = 13;
+const int trigPin = 12;
+const int echoPin = 14;
+const int buttonPin = 13;
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 Preferences preferences;
@@ -61,7 +61,7 @@ String savedSSID = "";
 String savedPass = "";
 const long gmtOffset_sec = 19800; // GMT+5:30 IST Offset (19,800 seconds)
 const int daylightOffset_sec = 0;
-const char* ntpServer = "pool.ntp.org";
+const char *ntpServer = "pool.ntp.org";
 
 // System State
 bool setupMode = false;
@@ -91,14 +91,17 @@ long readUltrasonicDistanceCm() {
   delayMicroseconds(10);
   digitalWrite(trigPin, LOW);
   long duration = pulseIn(echoPin, HIGH, 30000); // 30ms timeout
-  if (duration == 0) return 999; // Out of range / timeout
+  if (duration == 0)
+    return 999; // Out of range / timeout
   return duration * 0.034 / 2;
 }
 
 void setCORSHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-  server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  server.sendHeader("Access-Control-Allow-Methods",
+                    "GET, POST, DELETE, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers",
+                    "Content-Type, Authorization");
 }
 
 void saveAlarmsToNVS() {
@@ -114,7 +117,8 @@ void saveAlarmsToNVS() {
 void loadAlarmsFromNVS() {
   alarmCount = preferences.getInt("count", 0);
   nextAlarmId = preferences.getInt("nextId", 1);
-  if (alarmCount > MAX_ALARMS) alarmCount = MAX_ALARMS;
+  if (alarmCount > MAX_ALARMS)
+    alarmCount = MAX_ALARMS;
 
   for (int i = 0; i < alarmCount; i++) {
     char key[16];
@@ -158,15 +162,18 @@ void handleGetStatus() {
   int hour = 0, minute = 0, second = 0;
 
   if (hasTime) {
-    snprintf(timeStr, sizeof(timeStr), "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-    snprintf(dateStr, sizeof(dateStr), "%04d-%02d-%02d", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday);
+    snprintf(timeStr, sizeof(timeStr), "%02d:%02d:%02d", timeinfo.tm_hour,
+             timeinfo.tm_min, timeinfo.tm_sec);
+    snprintf(dateStr, sizeof(dateStr), "%04d-%02d-%02d",
+             timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday);
     hour = timeinfo.tm_hour;
     minute = timeinfo.tm_min;
     second = timeinfo.tm_sec;
   }
 
   currentDistanceCm = readUltrasonicDistanceCm();
-  bool boxOpen = (currentDistanceCm > 0 && currentDistanceCm < OPEN_DISTANCE_THRESHOLD_CM);
+  bool boxOpen =
+      (currentDistanceCm > 0 && currentDistanceCm < OPEN_DISTANCE_THRESHOLD_CM);
 
   String activeAlarmName = "";
   if (isAlarmActive && activeAlarmIndex >= 0 && activeAlarmIndex < alarmCount) {
@@ -174,8 +181,12 @@ void handleGetStatus() {
   }
 
   String json = "{";
-  json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
-  json += "\"ip\":\"" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : WiFi.softAPIP().toString()) + "\",";
+  json += "\"wifiConnected\":" +
+          String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
+  json += "\"ip\":\"" +
+          (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString()
+                                         : WiFi.softAPIP().toString()) +
+          "\",";
   json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
   json += "\"time\":\"" + String(timeStr) + "\",";
   json += "\"date\":\"" + String(dateStr) + "\",";
@@ -186,7 +197,9 @@ void handleGetStatus() {
   json += "\"boxOpen\":" + String(boxOpen ? "true" : "false") + ",";
   json += "\"isAlarmActive\":" + String(isAlarmActive ? "true" : "false") + ",";
   json += "\"activeAlarmName\":\"" + activeAlarmName + "\",";
-  json += "\"greenLed\":" + String(digitalRead(greenLedPin) ? "true" : "false") + ",";
+  json +=
+      "\"greenLed\":" + String(digitalRead(greenLedPin) ? "true" : "false") +
+      ",";
   json += "\"redLed\":" + String(redLedState ? "true" : "false") + ",";
   json += "\"buzzer\":" + String(buzzerState ? "true" : "false") + ",";
   json += "\"setupMode\":" + String(setupMode ? "true" : "false") + ",";
@@ -201,7 +214,8 @@ void handleGetAlarms() {
   setCORSHeaders();
   String json = "[";
   for (int i = 0; i < alarmCount; i++) {
-    if (i > 0) json += ",";
+    if (i > 0)
+      json += ",";
     json += "{";
     json += "\"id\":" + String(alarms[i].id) + ",";
     json += "\"name\":\"" + String(alarms[i].name) + "\",";
@@ -220,18 +234,23 @@ void handleGetAlarms() {
 void handleSaveAlarm() {
   setCORSHeaders();
   if (!server.hasArg("plain")) {
-    if (server.hasArg("name") && server.hasArg("hour") && server.hasArg("minute")) {
+    if (server.hasArg("name") && server.hasArg("hour") &&
+        server.hasArg("minute")) {
       int id = server.hasArg("id") ? server.arg("id").toInt() : 0;
       int existingIdx = -1;
       if (id > 0) {
         for (int i = 0; i < alarmCount; i++) {
-          if (alarms[i].id == id) { existingIdx = i; break; }
+          if (alarms[i].id == id) {
+            existingIdx = i;
+            break;
+          }
         }
       }
 
       int idx = (existingIdx >= 0) ? existingIdx : alarmCount;
       if (idx >= MAX_ALARMS) {
-        server.send(400, "application/json", "{\"error\":\"Max alarms limit reached\"}");
+        server.send(400, "application/json",
+                    "{\"error\":\"Max alarms limit reached\"}");
         return;
       }
 
@@ -243,9 +262,16 @@ void handleSaveAlarm() {
       strncpy(alarms[idx].name, server.arg("name").c_str(), 32);
       alarms[idx].hour = server.arg("hour").toInt();
       alarms[idx].minute = server.arg("minute").toInt();
-      strncpy(alarms[idx].dosage, server.hasArg("dosage") ? server.arg("dosage").c_str() : "1 Dose", 32);
-      strncpy(alarms[idx].color, server.hasArg("color") ? server.arg("color").c_str() : "#3b82f6", 10);
-      alarms[idx].active = server.hasArg("active") ? (server.arg("active") == "true" || server.arg("active") == "1") : true;
+      strncpy(alarms[idx].dosage,
+              server.hasArg("dosage") ? server.arg("dosage").c_str() : "1 Dose",
+              32);
+      strncpy(alarms[idx].color,
+              server.hasArg("color") ? server.arg("color").c_str() : "#3b82f6",
+              10);
+      alarms[idx].active =
+          server.hasArg("active")
+              ? (server.arg("active") == "true" || server.arg("active") == "1")
+              : true;
       alarms[idx].triggeredToday = false;
 
       saveAlarmsToNVS();
@@ -297,13 +323,17 @@ void handleSaveAlarm() {
     int existingIdx = -1;
     if (idVal > 0) {
       for (int i = 0; i < alarmCount; i++) {
-        if (alarms[i].id == idVal) { existingIdx = i; break; }
+        if (alarms[i].id == idVal) {
+          existingIdx = i;
+          break;
+        }
       }
     }
 
     int idx = (existingIdx >= 0) ? existingIdx : alarmCount;
     if (idx >= MAX_ALARMS) {
-      server.send(400, "application/json", "{\"error\":\"Max alarms limit reached\"}");
+      server.send(400, "application/json",
+                  "{\"error\":\"Max alarms limit reached\"}");
       return;
     }
 
@@ -334,7 +364,10 @@ void handleDeleteAlarm() {
     int id = server.arg("id").toInt();
     int foundIdx = -1;
     for (int i = 0; i < alarmCount; i++) {
-      if (alarms[i].id == id) { foundIdx = i; break; }
+      if (alarms[i].id == id) {
+        foundIdx = i;
+        break;
+      }
     }
 
     if (foundIdx >= 0) {
@@ -358,17 +391,18 @@ void handleTakeMedicine() {
   buzzerState = false;
   redLedState = false;
   digitalWrite(redLedPin, LOW);
-  
+
   digitalWrite(greenLedPin, HIGH);
   takenCountToday++;
-  
+
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Medicine Taken!");
   lcd.setCursor(0, 1);
   lcd.print("Great job!");
 
-  server.send(200, "application/json", "{\"success\":true,\"message\":\"Medicine intake recorded\"}");
+  server.send(200, "application/json",
+              "{\"success\":true,\"message\":\"Medicine intake recorded\"}");
 }
 
 void handleTestAlarm() {
@@ -381,7 +415,8 @@ void handleTestAlarm() {
   digitalWrite(redLedPin, LOW);
   digitalWrite(greenLedPin, LOW);
 
-  server.send(200, "application/json", "{\"success\":true,\"message\":\"Test triggered\"}");
+  server.send(200, "application/json",
+              "{\"success\":true,\"message\":\"Test triggered\"}");
 }
 
 void handleSaveConfig() {
@@ -389,8 +424,10 @@ void handleSaveConfig() {
   String ssid = "";
   String pass = "";
 
-  if (server.hasArg("ssid")) ssid = server.arg("ssid");
-  if (server.hasArg("pass")) pass = server.arg("pass");
+  if (server.hasArg("ssid"))
+    ssid = server.arg("ssid");
+  if (server.hasArg("pass"))
+    pass = server.arg("pass");
 
   if (ssid != "") {
     preferences.putString("ssid", ssid);
@@ -413,7 +450,8 @@ void handleSaveConfig() {
 <body>
   <div class="card">
     <h2>✓ Settings Saved!</h2>
-    <p>Connecting to Wi-Fi network: <strong>)rawliteral" + ssid + R"rawliteral(</strong></p>
+    <p>Connecting to Wi-Fi network: <strong>)rawliteral" +
+                          ssid + R"rawliteral(</strong></p>
     <p>Restarting Smart MedBox in 2 seconds...</p>
   </div>
 </body>
@@ -424,26 +462,33 @@ void handleSaveConfig() {
     delay(2000);
     ESP.restart();
   } else {
-    server.send(400, "text/html", "<h3>Error: Please select a Wi-Fi network</h3>");
+    server.send(400, "text/html",
+                "<h3>Error: Please select a Wi-Fi network</h3>");
   }
+}
+
+void handleScanWiFi() {
+  setCORSHeaders();
+  // Fast active scan: 80ms per channel (under 1 second total!)
+  int n = WiFi.scanNetworks(false, false, false, 80);
+  String json = "[";
+  if (n > 0) {
+    for (int i = 0; i < n; ++i) {
+      if (i > 0)
+        json += ",";
+      json += "{";
+      json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
+      json += "\"rssi\":" + String(WiFi.RSSI(i));
+      json += "}";
+    }
+  }
+  json += "]";
+  WiFi.scanDelete();
+  server.send(200, "application/json", json);
 }
 
 void handleRoot() {
   setCORSHeaders();
-  
-  // Scan for Wi-Fi Networks
-  int n = WiFi.scanNetworks();
-  String wifiOptions = "";
-  if (n <= 0) {
-    wifiOptions = "<option value=\"\">No Wi-Fi networks found</option>";
-  } else {
-    for (int i = 0; i < n; ++i) {
-      String ssidName = WiFi.SSID(i);
-      int rssi = WiFi.RSSI(i);
-      wifiOptions += "<option value=\"" + ssidName + "\">" + ssidName + " (" + String(rssi) + " dBm)</option>";
-    }
-  }
-
   String html = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
@@ -461,6 +506,7 @@ void handleRoot() {
     label { display: block; font-weight: 600; font-size: 0.85rem; color: #cbd5e1; margin-bottom: 6px; }
     input[type="text"], input[type="password"], select { width: 100%; padding: 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; font-size: 1rem; box-sizing: border-box; }
     select option { background: #0f172a; color: #fff; }
+    .divider-text { text-align: center; color: #64748b; font-size: 0.8rem; margin: 10px 0; font-weight: 600; }
     .btn { background: #0284c7; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; font-size: 1rem; margin-top: 10px; }
     .btn:hover { background: #0369a1; }
     .btn-secondary { background: #334155; margin-top: 8px; }
@@ -478,17 +524,24 @@ void handleRoot() {
     <p class="subtitle">Wi-Fi Setup & Device Management</p>
     <div id="time" class="status">Loading ESP32 Status...</div>
 
-    <form action="/save" method="POST">
+    <form id="wifiForm" onsubmit="submitWifiForm(event)">
       <div class="form-group">
-        <label>📶 Select Wi-Fi Network:</label>
-        <select name="ssid" required>
-)rawliteral" + wifiOptions + R"rawliteral(
+        <label>📶 Select Scanned Wi-Fi Network:</label>
+        <select id="ssidSelect">
+          <option value="">⏳ Scanning (Fast <1s)...</option>
         </select>
+      </div>
+
+      <div class="divider-text">── OR TYPE WI-FI NAME ──</div>
+
+      <div class="form-group">
+        <label>✍️ Wi-Fi Name (SSID):</label>
+        <input type="text" id="manualSsid" placeholder="e.g. MyHomeWiFi">
       </div>
 
       <div class="form-group">
         <label>🔑 Wi-Fi Password:</label>
-        <input type="password" name="pass" placeholder="Enter Wi-Fi Password" required>
+        <input type="password" id="wifiPass" placeholder="Enter Wi-Fi Password" required>
       </div>
 
       <input type="submit" class="btn" value="Save & Connect Wi-Fi">
@@ -503,6 +556,50 @@ void handleRoot() {
   </div>
 
   <script>
+    function loadWifiNetworks() {
+      const select = document.getElementById('ssidSelect');
+      fetch('/api/scan-wifi')
+        .then(r => r.json())
+        .then(networks => {
+          if (!networks || networks.length === 0) {
+            select.innerHTML = '<option value="">No Wi-Fi networks found</option>';
+          } else {
+            select.innerHTML = '<option value="">-- Choose Scanned Network --</option>' + 
+              networks.map(n => `<option value="${n.ssid}">${n.ssid} (${n.rssi} dBm)</option>`).join('');
+          }
+        })
+        .catch(() => {
+          select.innerHTML = '<option value="">Scan failed - Type name below</option>';
+        });
+    }
+
+    function submitWifiForm(e) {
+      e.preventDefault();
+      const selectVal = document.getElementById('ssidSelect').value;
+      const manualVal = document.getElementById('manualSsid').value.trim();
+      const ssid = manualVal !== '' ? manualVal : selectVal;
+      const pass = document.getElementById('wifiPass').value;
+
+      if (!ssid) {
+        alert("Please select or type a Wi-Fi network name!");
+        return;
+      }
+
+      const formData = new URLSearchParams();
+      formData.append('ssid', ssid);
+      formData.append('pass', pass);
+
+      fetch('/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: formData
+      }).then(r => r.text()).then(html => {
+        document.body.innerHTML = html;
+      });
+    }
+
+    loadWifiNetworks();
+
     setInterval(() => {
       fetch('/api/status').then(r=>r.json()).then(d=>{
         document.getElementById('time').innerText = 'ESP32 Time: ' + d.time + ' | ' + (d.wifiConnected ? 'WiFi Connected' : 'AP Setup Mode');
@@ -571,6 +668,7 @@ void setup() {
 
   if (setupMode) {
     Serial.println("Starting Soft AP Mode...");
+    WiFi.mode(WIFI_AP_STA);
     WiFi.softAP("MedBox-Setup");
     IPAddress apIP = WiFi.softAPIP();
 
@@ -593,6 +691,7 @@ void setup() {
 
   server.on("/", HTTP_GET, handleRoot);
   server.on("/save", HTTP_POST, handleSaveConfig);
+  server.on("/api/scan-wifi", HTTP_GET, handleScanWiFi);
   server.on("/api/status", HTTP_GET, handleGetStatus);
   server.on("/api/alarms", HTTP_GET, handleGetAlarms);
   server.on("/api/alarms", HTTP_POST, handleSaveAlarm);
@@ -601,6 +700,7 @@ void setup() {
   server.on("/api/test-alarm", HTTP_POST, handleTestAlarm);
   server.on("/api/config", HTTP_POST, handleSaveConfig);
 
+  server.on("/api/scan-wifi", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/status", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/alarms", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/take", HTTP_OPTIONS, handleCORSPreflight);
@@ -617,7 +717,8 @@ void setup() {
 void loop() {
   server.handleClient();
 
-  // --- HARDWARE BUTTON LOGIC (Single Click = Toggle IP View, Hold 3s = Memory Reset) ---
+  // --- HARDWARE BUTTON LOGIC (Single Click = Toggle IP View, Hold 3s = Memory
+  // Reset) ---
   if (digitalRead(buttonPin) == LOW) {
     if (!buttonIsPressed) {
       buttonIsPressed = true;
@@ -685,14 +786,16 @@ void loop() {
         lcd.setCursor(0, 0);
         lcd.print("IP Address:     ");
         lcd.setCursor(0, 1);
-        String ipStr = (WiFi.status() == WL_CONNECTED) ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+        String ipStr = (WiFi.status() == WL_CONNECTED)
+                           ? WiFi.localIP().toString()
+                           : WiFi.softAPIP().toString();
         char ipBuf[17];
         snprintf(ipBuf, sizeof(ipBuf), "%-16.16s", ipStr.c_str());
         lcd.print(ipBuf);
       } else {
         // Mode 2: Display Normal Time & Medicine Scrolling Marquee
         char marqueeBuffer[40];
-        
+
         String nextMedInfo = "No Active Alarms";
         int minDiff = 99999;
         for (int i = 0; i < alarmCount; i++) {
@@ -700,21 +803,25 @@ void loop() {
             int alarmTotalMin = alarms[i].hour * 60 + alarms[i].minute;
             int currTotalMin = currentHour * 60 + currentMin;
             int diff = alarmTotalMin - currTotalMin;
-            if (diff < 0) diff += 1440;
+            if (diff < 0)
+              diff += 1440;
             if (diff < minDiff) {
               minDiff = diff;
               char buf[32];
-              snprintf(buf, sizeof(buf), "%s @ %02d:%02d", alarms[i].name, alarms[i].hour, alarms[i].minute);
+              snprintf(buf, sizeof(buf), "%s @ %02d:%02d", alarms[i].name,
+                       alarms[i].hour, alarms[i].minute);
               nextMedInfo = String(buf);
             }
           }
         }
 
-        snprintf(marqueeBuffer, sizeof(marqueeBuffer), " Time %02d:%02d:%02d | Next: %s   ", 
-                 currentHour, currentMin, currentSec, nextMedInfo.c_str());
-        
+        snprintf(marqueeBuffer, sizeof(marqueeBuffer),
+                 " Time %02d:%02d:%02d | Next: %s   ", currentHour, currentMin,
+                 currentSec, nextMedInfo.c_str());
+
         String scrollStr = String(marqueeBuffer);
-        if (scrollIndex > scrollStr.length() - 16) scrollIndex = 0;
+        if (scrollIndex > scrollStr.length() - 16)
+          scrollIndex = 0;
 
         lcd.setCursor(0, 0);
         lcd.print(scrollStr.substring(scrollIndex, scrollIndex + 16));
@@ -723,7 +830,8 @@ void loop() {
         lcd.setCursor(0, 1);
         char statusLine[17];
         if (WiFi.status() == WL_CONNECTED) {
-          snprintf(statusLine, sizeof(statusLine), "MedBox OK: %02d:%02d", currentHour, currentMin);
+          snprintf(statusLine, sizeof(statusLine), "MedBox OK: %02d:%02d",
+                   currentHour, currentMin);
         } else {
           snprintf(statusLine, sizeof(statusLine), "AP: 192.168.4.1  ");
         }
@@ -738,7 +846,8 @@ void loop() {
       currentDistanceCm = readUltrasonicDistanceCm();
     }
 
-    if (currentDistanceCm > 0 && currentDistanceCm < OPEN_DISTANCE_THRESHOLD_CM) {
+    if (currentDistanceCm > 0 &&
+        currentDistanceCm < OPEN_DISTANCE_THRESHOLD_CM) {
       isAlarmActive = false;
       noTone(buzzerPin);
       buzzerState = false;
