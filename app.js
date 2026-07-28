@@ -130,20 +130,18 @@ function format12Hour(h, m) {
 
 // --- Network & Cloud Sync Logic ---
 function initNetworkConnection() {
-  if (pollTimer) clearInterval(pollTimer);
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
   if (mqttClient) {
     try { mqttClient.end(); } catch (e) {}
+    mqttClient = null;
   }
 
-  if (config.mode === 'cloud') {
-    initMqttCloudSync();
-  } else if (config.mode === 'esp32') {
-    fetchStatus();
-    pollTimer = setInterval(fetchStatus, config.pollInterval);
-  } else {
-    updateTelemetryUI(telemetry);
-    updateConnectionBadge(true, "Demo Mode (Simulated)");
-  }
+  // Force Cloud Sync mode for all network connections
+  config.mode = 'cloud';
+  initMqttCloudSync();
 }
 
 let lastMqttTelemetryTime = 0;
@@ -622,15 +620,12 @@ function toggleModeInputs() {
 
 async function saveConfigSubmit(e) {
   e.preventDefault();
-  config.mode = document.getElementById('cfgMode').value;
-  config.espIp = document.getElementById('cfgEspIp').value.trim() || '192.168.4.1';
-
-  localStorage.setItem('medbox_mode', config.mode);
-  localStorage.setItem('medbox_esp_ip', config.espIp);
+  config.mode = 'cloud';
+  localStorage.setItem('medbox_mode', 'cloud');
 
   closeConfigModal();
   initNetworkConnection();
-  showToast("Settings saved!", "success");
+  showToast("Cloud Sync Settings Saved!", "success");
 }
 
 // --- Toast Utilities ---
