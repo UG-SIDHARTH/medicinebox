@@ -646,6 +646,78 @@ void publishStatusMQTT() {
   mqttClient.publish(mqtt_topic_telemetry, json.c_str());
 }
 
+void parseMqttAlarms(String payload) {
+  if (payload.indexOf('[') == -1 || payload.indexOf(']') == -1) return;
+  
+  int newCount = 0;
+  int pos = 0;
+  
+  while ((pos = payload.indexOf('{', pos)) != -1 && newCount < MAX_ALARMS) {
+    int endPos = payload.indexOf('}', pos);
+    if (endPos == -1) break;
+    
+    String item = payload.substring(pos, endPos + 1);
+    
+    int idVal = newCount + 1;
+    if (item.indexOf("\"id\":") != -1) {
+      int s = item.indexOf("\"id\":") + 5;
+      idVal = item.substring(s, item.indexOf(",", s)).toInt();
+    }
+    
+    String nameVal = "Medicine";
+    if (item.indexOf("\"name\":\"") != -1) {
+      int s = item.indexOf("\"name\":\"") + 8;
+      nameVal = item.substring(s, item.indexOf("\"", s));
+    }
+    
+    int hourVal = 8;
+    if (item.indexOf("\"hour\":") != -1) {
+      int s = item.indexOf("\"hour\":") + 7;
+      hourVal = item.substring(s, item.indexOf(",", s)).toInt();
+    }
+    
+    int minVal = 0;
+    if (item.indexOf("\"minute\":") != -1) {
+      int s = item.indexOf("\"minute\":") + 9;
+      minVal = item.substring(s, item.indexOf(",", s)).toInt();
+    }
+    
+    String dosageVal = "1 Dose";
+    if (item.indexOf("\"dosage\":\"") != -1) {
+      int s = item.indexOf("\"dosage\":\"") + 10;
+      dosageVal = item.substring(s, item.indexOf("\"", s));
+    }
+    
+    String colorVal = "#3b82f6";
+    if (item.indexOf("\"color\":\"") != -1) {
+      int s = item.indexOf("\"color\":\"") + 9;
+      colorVal = item.substring(s, item.indexOf("\"", s));
+    }
+    
+    bool activeVal = (item.indexOf("\"active\":false") == -1);
+    
+    alarms[newCount].id = idVal;
+    strncpy(alarms[newCount].name, nameVal.c_str(), 32);
+    alarms[newCount].hour = hourVal;
+    alarms[newCount].minute = minVal;
+    strncpy(alarms[newCount].dosage, dosageVal.c_str(), 32);
+    strncpy(alarms[newCount].color, colorVal.c_str(), 10);
+    alarms[newCount].active = activeVal;
+    alarms[newCount].triggeredToday = false;
+    
+    if (idVal >= nextAlarmId) nextAlarmId = idVal + 1;
+    newCount++;
+    pos = endPos + 1;
+  }
+  
+  if (newCount > 0) {
+    alarmCount = newCount;
+    saveAlarmsToNVS();
+    Serial.println("Updated alarms from MQTT Cloud!");
+    publishStatusMQTT();
+  }
+}
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   String message = "";
   for (unsigned int i = 0; i < length; i++) {
@@ -662,6 +734,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       digitalWrite(redLedPin, LOW);
       digitalWrite(greenLedPin, HIGH);
       takenCountToday++;
+      publishStatusMQTT();
     } else if (message.indexOf("test_alarm") != -1) {
       digitalWrite(redLedPin, HIGH);
       digitalWrite(greenLedPin, HIGH);
@@ -670,7 +743,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       noTone(buzzerPin);
       digitalWrite(redLedPin, LOW);
       digitalWrite(greenLedPin, LOW);
+      publishStatusMQTT();
     }
+  } else if (String(topic) == mqtt_topic_alarms) {
+    parseMqttAlarms(message);
   }
 }
 
@@ -681,8 +757,10 @@ void reconnectMQTT() {
     lastReconnectAttempt = millis();
     String clientId = "ESP32MedBox-" + String(random(0xffff), HEX);
     if (mqttClient.connect(clientId.c_str())) {
+      Serial.println("MQTT Connected to HiveMQ Cloud!");
       mqttClient.subscribe(mqtt_topic_commands);
       mqttClient.subscribe(mqtt_topic_alarms);
+      publishStatusMQTT();
     }
   }
 }
@@ -785,6 +863,7 @@ void setup() {
   Serial.println("HTTP Server Started.");
 
   mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setBufferSize(2048);
   mqttClient.setCallback(mqttCallback);
 }
 

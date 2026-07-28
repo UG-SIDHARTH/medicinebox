@@ -143,6 +143,9 @@ function initNetworkConnection() {
   }
 }
 
+let lastMqttTelemetryTime = 0;
+let cloudCheckInterval = null;
+
 function initMqttCloudSync() {
   if (typeof mqtt === 'undefined') {
     updateConnectionBadge(false, "MQTT Library Missing");
@@ -154,26 +157,43 @@ function initMqttCloudSync() {
   try {
     mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
       clientId: 'web_dashboard_' + Math.random().toString(16).substr(2, 8),
-      keepalive: 60
+      keepalive: 30,
+      reconnectPeriod: 3000
     });
 
+    if (cloudCheckInterval) clearInterval(cloudCheckInterval);
+
     mqttClient.on('connect', () => {
-      updateConnectionBadge(true, "Cloud Sync (medicinebox.ugsidharth.in)");
+      console.log("Connected to HiveMQ Cloud MQTT Broker!");
+      updateConnectionBadge(true, "Cloud Connected (Waiting for ESP32...)");
       mqttClient.subscribe(MQTT_TOPIC_TELEMETRY);
       mqttClient.subscribe(MQTT_TOPIC_ALARMS);
 
-      // Publish initial alarms list to cloud
-      publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
+      // Periodically verify if ESP32 telemetry is actively publishing
+      cloudCheckInterval = setInterval(() => {
+        if (config.mode === 'cloud') {
+          const timeDiff = Date.now() - lastMqttTelemetryTime;
+          if (lastMqttTelemetryTime > 0 && timeDiff < 5000) {
+            updateConnectionBadge(true, "Online (Cloud Sync)");
+          } else if (lastMqttTelemetryTime > 0) {
+            updateConnectionBadge(false, "ESP32 Offline (Cloud)");
+          } else {
+            updateConnectionBadge(true, "Cloud Connected (Waiting for ESP32)");
+          }
+        }
+      }, 2000);
     });
 
     mqttClient.on('message', (topic, message) => {
       try {
         const data = JSON.parse(message.toString());
         if (topic === MQTT_TOPIC_TELEMETRY) {
+          lastMqttTelemetryTime = Date.now();
           telemetry = data;
           updateTelemetryUI(data);
+          updateConnectionBadge(true, "Online (Cloud Sync)");
         } else if (topic === MQTT_TOPIC_ALARMS) {
-          if (Array.isArray(data)) {
+          if (Array.isArray(data) && data.length > 0) {
             alarms = data;
             renderAlarms();
           }
@@ -186,6 +206,10 @@ function initMqttCloudSync() {
     mqttClient.on('error', (err) => {
       console.error("MQTT Error:", err);
       updateConnectionBadge(false, "Cloud Sync Error");
+    });
+
+    mqttClient.on('offline', () => {
+      updateConnectionBadge(false, "Cloud Offline");
     });
   } catch (e) {
     updateConnectionBadge(false, "Cloud Error");
