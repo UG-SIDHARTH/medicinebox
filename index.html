@@ -281,8 +281,9 @@
         <div class="form-group">
           <label>Connection Mode</label>
           <select id="cfgMode" onchange="toggleModeInputs()">
+            <option value="cloud">Cloud Domain Sync (medicinebox.ugsidharth.in)</option>
             <option value="demo">Interactive Demo / Simulation Mode</option>
-            <option value="esp32">Live ESP32 Microcontroller API</option>
+            <option value="esp32">Local ESP32 Microcontroller API</option>
           </select>
         </div>
 
@@ -303,6 +304,7 @@
   <!-- Toast Notification Container -->
   <div class="toast-container" id="toastContainer"></div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

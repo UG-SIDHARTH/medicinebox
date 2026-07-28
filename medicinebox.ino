@@ -18,8 +18,10 @@
 #include "time.h"
 #include <LiquidCrystal_I2C.h>
 #include <Preferences.h>
+#include <PubSubClient.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <WiFiClient.h>
 
 // ==========================================
 // 1. HARDWARE PINS & PERIPHERALS
@@ -72,6 +74,16 @@ long currentDistanceCm = 999;
 bool greenLedState = false;
 bool redLedState = false;
 bool buzzerState = false;
+
+// MQTT Cloud Config for medicinebox.ugsidharth.in
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+const char *mqtt_server = "broker.hivemq.com";
+const int mqtt_port = 1883;
+const char *mqtt_topic_telemetry = "ug_sidharth/medbox/telemetry";
+const char *mqtt_topic_commands = "ug_sidharth/medbox/commands";
+const char *mqtt_topic_alarms = "ug_sidharth/medbox/alarms";
+unsigned long lastMqttPublish = 0;
 
 // Display & Button Timing
 unsigned long lastScrollTime = 0;
@@ -587,6 +599,94 @@ void handleRoot() {
   server.send(200, "text/html", html);
 }
 
+void publishStatusMQTT() {
+  if (!mqttClient.connected()) return;
+
+  struct tm timeinfo;
+  bool hasTime = getLocalTime(&timeinfo);
+  char timeStr[16] = "00:00:00";
+  char dateStr[16] = "1970-01-01";
+  int hour = 0, minute = 0, second = 0;
+
+  if (hasTime) {
+    snprintf(timeStr, sizeof(timeStr), "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+    snprintf(dateStr, sizeof(dateStr), "%04d-%02d-%02d", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday);
+    hour = timeinfo.tm_hour;
+    minute = timeinfo.tm_min;
+    second = timeinfo.tm_sec;
+  }
+
+  bool boxOpen = (currentDistanceCm > 0 && currentDistanceCm < OPEN_DISTANCE_THRESHOLD_CM);
+  String activeAlarmName = "";
+  if (isAlarmActive && activeAlarmIndex >= 0 && activeAlarmIndex < alarmCount) {
+    activeAlarmName = String(alarms[activeAlarmIndex].name);
+  }
+
+  String json = "{";
+  json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
+  json += "\"ip\":\"" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : WiFi.softAPIP().toString()) + "\",";
+  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+  json += "\"time\":\"" + String(timeStr) + "\",";
+  json += "\"date\":\"" + String(dateStr) + "\",";
+  json += "\"hour\":" + String(hour) + ",";
+  json += "\"minute\":" + String(minute) + ",";
+  json += "\"second\":" + String(second) + ",";
+  json += "\"distance\":" + String(currentDistanceCm) + ",";
+  json += "\"boxOpen\":" + String(boxOpen ? "true" : "false") + ",";
+  json += "\"isAlarmActive\":" + String(isAlarmActive ? "true" : "false") + ",";
+  json += "\"activeAlarmName\":\"" + activeAlarmName + "\",";
+  json += "\"greenLed\":" + String(digitalRead(greenLedPin) ? "true" : "false") + ",";
+  json += "\"redLed\":" + String(redLedState ? "true" : "false") + ",";
+  json += "\"buzzer\":" + String(buzzerState ? "true" : "false") + ",";
+  json += "\"setupMode\":" + String(setupMode ? "true" : "false") + ",";
+  json += "\"alarmCount\":" + String(alarmCount) + ",";
+  json += "\"takenCount\":" + String(takenCountToday);
+  json += "}";
+
+  mqttClient.publish(mqtt_topic_telemetry, json.c_str());
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String message = "";
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+
+  if (String(topic) == mqtt_topic_commands) {
+    if (message.indexOf("take") != -1) {
+      isAlarmActive = false;
+      activeAlarmIndex = -1;
+      noTone(buzzerPin);
+      buzzerState = false;
+      redLedState = false;
+      digitalWrite(redLedPin, LOW);
+      digitalWrite(greenLedPin, HIGH);
+      takenCountToday++;
+    } else if (message.indexOf("test_alarm") != -1) {
+      digitalWrite(redLedPin, HIGH);
+      digitalWrite(greenLedPin, HIGH);
+      tone(buzzerPin, 1000);
+      delay(1000);
+      noTone(buzzerPin);
+      digitalWrite(redLedPin, LOW);
+      digitalWrite(greenLedPin, LOW);
+    }
+  }
+}
+
+void reconnectMQTT() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  static unsigned long lastReconnectAttempt = 0;
+  if (millis() - lastReconnectAttempt > 5000) {
+    lastReconnectAttempt = millis();
+    String clientId = "ESP32MedBox-" + String(random(0xffff), HEX);
+    if (mqttClient.connect(clientId.c_str())) {
+      mqttClient.subscribe(mqtt_topic_commands);
+      mqttClient.subscribe(mqtt_topic_alarms);
+    }
+  }
+}
+
 // ==========================================
 // 5. SETUP
 // ==========================================
@@ -683,6 +783,9 @@ void setup() {
 
   server.begin();
   Serial.println("HTTP Server Started.");
+
+  mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setCallback(mqttCallback);
 }
 
 // ==========================================
@@ -690,6 +793,18 @@ void setup() {
 // ==========================================
 void loop() {
   server.handleClient();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!mqttClient.connected()) {
+      reconnectMQTT();
+    }
+    mqttClient.loop();
+
+    if (millis() - lastMqttPublish > 1000) {
+      lastMqttPublish = millis();
+      publishStatusMQTT();
+    }
+  }
 
   // --- HARDWARE BUTTON LOGIC (Single Click = Toggle IP View, Hold 3s = Memory
   // Reset) ---

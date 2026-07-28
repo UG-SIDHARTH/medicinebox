@@ -1,10 +1,10 @@
 /* ==========================================================================
-   SMART MEDBOX - APPLICATION LOGIC & ESP32 API CLIENT
+   SMART MEDBOX - APPLICATION LOGIC & CLOUD DOMAIN SYNC
    ========================================================================== */
 
 // --- Global State ---
 let config = {
-  mode: localStorage.getItem('medbox_mode') || 'demo', // 'demo' or 'esp32'
+  mode: localStorage.getItem('medbox_mode') || 'cloud', // 'cloud', 'demo', or 'esp32'
   espIp: localStorage.getItem('medbox_esp_ip') || '192.168.4.1',
   pollInterval: 1000
 };
@@ -38,13 +38,20 @@ let historyLog = JSON.parse(localStorage.getItem('medbox_history')) || [
 let pollTimer = null;
 let clockTimer = null;
 
+// MQTT Cloud Topics for medicinebox.ugsidharth.in
+const MQTT_TOPIC_TELEMETRY = 'ug_sidharth/medbox/telemetry';
+const MQTT_TOPIC_COMMANDS  = 'ug_sidharth/medbox/commands';
+const MQTT_TOPIC_ALARMS    = 'ug_sidharth/medbox/alarms';
+
+let mqttClient = null;
+
 // --- Initialize App ---
 document.addEventListener('DOMContentLoaded', () => {
   loadConfigToForm();
   renderAlarms();
   renderHistoryLog();
   startClock();
-  startPolling();
+  initNetworkConnection();
 });
 
 // --- Clock & Countdown logic ---
@@ -80,7 +87,7 @@ function updateCountdown() {
   activeAlarms.forEach(a => {
     const alarmTotalSec = a.hour * 3600 + a.minute * 60;
     let diffSec = alarmTotalSec - currentTotalSec;
-    if (diffSec <= 0) diffSec += 86400; // Next day
+    if (diffSec <= 0) diffSec += 86400;
 
     if (diffSec < minDiffSec) {
       minDiffSec = diffSec;
@@ -93,7 +100,6 @@ function updateCountdown() {
     document.getElementById('nextMedDosage').innerText = nextAlarm.dosage || "1 Dose";
     document.getElementById('nextMedTime').innerText = `⏰ ${format12Hour(nextAlarm.hour, nextAlarm.minute)}`;
 
-    // Set pill color dot
     const dot = document.getElementById('nextPillDot');
     const badge = document.getElementById('nextPillTag');
     if (dot) dot.style.background = nextAlarm.color;
@@ -119,20 +125,80 @@ function format12Hour(h, m) {
   return `${hour12}:${minStr} ${period}`;
 }
 
-// --- Polling & Network Logic ---
-function startPolling() {
+// --- Network & Cloud Sync Logic ---
+function initNetworkConnection() {
   if (pollTimer) clearInterval(pollTimer);
-  fetchStatus();
-  pollTimer = setInterval(fetchStatus, config.pollInterval);
-}
+  if (mqttClient) {
+    try { mqttClient.end(); } catch (e) {}
+  }
 
-async function fetchStatus() {
-  if (config.mode === 'demo') {
+  if (config.mode === 'cloud') {
+    initMqttCloudSync();
+  } else if (config.mode === 'esp32') {
+    fetchStatus();
+    pollTimer = setInterval(fetchStatus, config.pollInterval);
+  } else {
     updateTelemetryUI(telemetry);
     updateConnectionBadge(true, "Demo Mode (Simulated)");
+  }
+}
+
+function initMqttCloudSync() {
+  if (typeof mqtt === 'undefined') {
+    updateConnectionBadge(false, "MQTT Library Missing");
     return;
   }
 
+  updateConnectionBadge(true, "Connecting Cloud...");
+
+  try {
+    mqttClient = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+      clientId: 'web_dashboard_' + Math.random().toString(16).substr(2, 8),
+      keepalive: 60
+    });
+
+    mqttClient.on('connect', () => {
+      updateConnectionBadge(true, "Cloud Sync (medicinebox.ugsidharth.in)");
+      mqttClient.subscribe(MQTT_TOPIC_TELEMETRY);
+      mqttClient.subscribe(MQTT_TOPIC_ALARMS);
+
+      // Publish initial alarms list to cloud
+      publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
+    });
+
+    mqttClient.on('message', (topic, message) => {
+      try {
+        const data = JSON.parse(message.toString());
+        if (topic === MQTT_TOPIC_TELEMETRY) {
+          telemetry = data;
+          updateTelemetryUI(data);
+        } else if (topic === MQTT_TOPIC_ALARMS) {
+          if (Array.isArray(data)) {
+            alarms = data;
+            renderAlarms();
+          }
+        }
+      } catch (e) {
+        console.error("Error parsing MQTT payload:", e);
+      }
+    });
+
+    mqttClient.on('error', (err) => {
+      console.error("MQTT Error:", err);
+      updateConnectionBadge(false, "Cloud Sync Error");
+    });
+  } catch (e) {
+    updateConnectionBadge(false, "Cloud Error");
+  }
+}
+
+function publishMqttMessage(topic, payload) {
+  if (mqttClient && mqttClient.connected) {
+    mqttClient.publish(topic, JSON.stringify(payload));
+  }
+}
+
+async function fetchStatus() {
   try {
     const res = await fetch(`http://${config.espIp}/api/status`, { mode: 'cors' });
     if (res.ok) {
@@ -140,8 +206,6 @@ async function fetchStatus() {
       telemetry = data;
       updateTelemetryUI(data);
       updateConnectionBadge(true, `Connected (${config.espIp})`);
-
-      // Fetch latest alarms list from ESP32
       fetchAlarmsFromESP();
     } else {
       updateConnectionBadge(false, "ESP32 Unreachable");
@@ -167,23 +231,27 @@ async function fetchAlarmsFromESP() {
 function updateConnectionBadge(isConnected, label) {
   const badge = document.getElementById('connectionBadge');
   const text = document.getElementById('connectionText');
-  badge.className = 'connection-badge ' + (config.mode === 'demo' ? 'demo-mode' : (isConnected ? 'connected' : 'disconnected'));
+  
+  let cls = 'demo-mode';
+  if (config.mode === 'cloud') cls = isConnected ? 'connected' : 'disconnected';
+  else if (config.mode === 'esp32') cls = isConnected ? 'connected' : 'disconnected';
+  
+  badge.className = 'connection-badge ' + cls;
   text.innerText = label;
 }
 
 function updateTelemetryUI(data) {
-  // Ultrasonic Distance
   const distVal = document.getElementById('distanceValue');
   const distBar = document.getElementById('distanceBar');
   const stateBadge = document.getElementById('boxStateBadge');
 
-  if (distVal) distVal.innerText = `${data.distance.toFixed(1)} cm`;
+  if (distVal) distVal.innerText = `${(data.distance || 0).toFixed(1)} cm`;
   if (distBar) {
-    const pct = Math.min(100, Math.max(5, (data.distance / 50) * 100));
+    const pct = Math.min(100, Math.max(5, ((data.distance || 0) / 50) * 100));
     distBar.style.width = `${pct}%`;
   }
   if (stateBadge) {
-    if (data.boxOpen || data.distance < 15) {
+    if (data.boxOpen || (data.distance > 0 && data.distance < 15)) {
       stateBadge.innerText = "👐 Box Lid OPEN (< 15cm) - Pill Taken Detection!";
       stateBadge.style.color = "#10b981";
     } else {
@@ -192,7 +260,6 @@ function updateTelemetryUI(data) {
     }
   }
 
-  // Hardware LED / Buzzer badges
   const buzzerText = document.getElementById('buzzerStateText');
   const redLedText = document.getElementById('redLedText');
   const greenLedText = document.getElementById('greenLedText');
@@ -203,7 +270,6 @@ function updateTelemetryUI(data) {
   if (greenLedText) greenLedText.innerText = data.greenLed ? "SOLID ON 🟢" : "OFF";
   if (rssiText) rssiText.innerText = `${data.rssi || -60} dBm`;
 
-  // Intake Progress
   const totalAlarms = alarms.length;
   const takenCount = data.takenCount || 0;
   document.getElementById('intakeRatio').innerText = `${takenCount} / ${totalAlarms} Taken`;
@@ -254,7 +320,9 @@ async function toggleAlarmActive(id, active) {
   const alarm = alarms.find(a => a.id === id);
   if (alarm) {
     alarm.active = active;
-    if (config.mode === 'esp32') {
+    if (config.mode === 'cloud') {
+      publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
+    } else if (config.mode === 'esp32') {
       await sendAlarmToESP(alarm);
     }
     showToast(`Timer "${alarm.name}" ${active ? 'enabled' : 'disabled'}`, 'info');
@@ -266,7 +334,9 @@ async function deleteAlarm(id) {
   if (!confirm("Are you sure you want to delete this medicine timer?")) return;
 
   alarms = alarms.filter(a => a.id !== id);
-  if (config.mode === 'esp32') {
+  if (config.mode === 'cloud') {
+    publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
+  } else if (config.mode === 'esp32') {
     try {
       await fetch(`http://${config.espIp}/api/alarms?id=${id}`, { method: 'DELETE', mode: 'cors' });
     } catch (e) {
@@ -281,14 +351,13 @@ async function triggerMarkTaken() {
   const now = new Date();
   const timeStr = now.toLocaleTimeString();
 
-  // Find current/next medicine name
   const nextMedName = document.getElementById('nextMedName').innerText;
 
   historyLog.unshift({
     timestamp: timeStr,
     medicine: nextMedName !== 'No Active Alarms' ? nextMedName : 'General Medicine',
     time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    method: "Manual Dashboard Button",
+    method: "Dashboard Button",
     status: "Taken"
   });
   saveHistoryLog();
@@ -304,7 +373,9 @@ async function triggerMarkTaken() {
     updateTelemetryUI(telemetry);
   }, 3000);
 
-  if (config.mode === 'esp32') {
+  if (config.mode === 'cloud') {
+    publishMqttMessage(MQTT_TOPIC_COMMANDS, { action: "take" });
+  } else if (config.mode === 'esp32') {
     try {
       await fetch(`http://${config.espIp}/api/take`, { method: 'POST', mode: 'cors' });
     } catch (e) { console.error(e); }
@@ -327,7 +398,9 @@ async function triggerTestBuzzer() {
     updateTelemetryUI(telemetry);
   }, 2000);
 
-  if (config.mode === 'esp32') {
+  if (config.mode === 'cloud') {
+    publishMqttMessage(MQTT_TOPIC_COMMANDS, { action: "test_alarm" });
+  } else if (config.mode === 'esp32') {
     try {
       await fetch(`http://${config.espIp}/api/test-alarm`, { method: 'POST', mode: 'cors' });
     } catch (e) { console.error(e); }
@@ -398,7 +471,9 @@ async function saveAlarmSubmit(event) {
     alarms.push(alarm);
   }
 
-  if (config.mode === 'esp32') {
+  if (config.mode === 'cloud') {
+    publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
+  } else if (config.mode === 'esp32') {
     await sendAlarmToESP(alarm);
   }
 
@@ -491,7 +566,7 @@ async function saveConfigSubmit(e) {
   localStorage.setItem('medbox_esp_ip', config.espIp);
 
   closeConfigModal();
-  startPolling();
+  initNetworkConnection();
   showToast("Settings saved!", "success");
 }
 
