@@ -3,8 +3,14 @@
    ========================================================================== */
 
 // --- Global State ---
+let storedMode = localStorage.getItem('medbox_mode');
+if (!storedMode || storedMode === 'esp32') {
+  storedMode = 'cloud';
+  localStorage.setItem('medbox_mode', 'cloud');
+}
+
 let config = {
-  mode: localStorage.getItem('medbox_mode') || 'cloud', // 'cloud', 'demo', or 'esp32'
+  mode: storedMode, // Always default to 'cloud' for cross-network connectivity
   espIp: localStorage.getItem('medbox_esp_ip') || '192.168.4.1',
   pollInterval: 1000
 };
