@@ -490,29 +490,6 @@ async function saveConfigSubmit(e) {
   localStorage.setItem('medbox_mode', config.mode);
   localStorage.setItem('medbox_esp_ip', config.espIp);
 
-  const ssid = document.getElementById('cfgSsid').value.trim();
-  const pass = document.getElementById('cfgPass').value.trim();
-  const gmtOffset = document.getElementById('cfgGmtOffset').value.trim();
-
-  if (config.mode === 'esp32' && ssid && pass) {
-    try {
-      const formData = new URLSearchParams();
-      formData.append('ssid', ssid);
-      formData.append('pass', pass);
-      if (gmtOffset) formData.append('gmtOffset', gmtOffset);
-
-      await fetch(`http://${config.espIp}/api/config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData,
-        mode: 'cors'
-      });
-      showToast("Config sent! ESP32 restarting...", "success");
-    } catch (err) {
-      showToast("Failed to connect to ESP32 API", "error");
-    }
-  }
-
   closeConfigModal();
   startPolling();
   showToast("Settings saved!", "success");
