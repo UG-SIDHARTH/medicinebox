@@ -238,7 +238,7 @@ function publishMqttMessage(topic, payload) {
 let fetchFailCount = 0;
 
 async function fetchStatus() {
-  if (config.mode !== 'esp32') return; // Guard: Never execute HTTP fetch when in Cloud Mode
+  if (config.mode !== 'esp32' || window.location.protocol === 'https:') return;
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -262,21 +262,11 @@ async function fetchStatus() {
   } catch (err) {
     fetchFailCount++;
     updateConnectionBadge(false, `Offline (${config.espIp} Timed Out)`);
-
-    if (fetchFailCount >= 3 && config.mode === 'esp32') {
-      console.warn("Local IP 10.249.18.38 unreachable across networks. Auto-switching to Cloud Sync.");
-      showToast("⚠️ Local IP unreachable on this network. Switching to Cloud Sync...", "info");
-      config.mode = 'cloud';
-      localStorage.setItem('medbox_mode', 'cloud');
-      const cfgSelect = document.getElementById('cfgMode');
-      if (cfgSelect) cfgSelect.value = 'cloud';
-      toggleModeInputs();
-      initNetworkConnection();
-    }
   }
 }
 
 async function fetchAlarmsFromESP() {
+  if (config.mode !== 'esp32' || window.location.protocol === 'https:') return;
   try {
     const res = await fetch(`http://${config.espIp}/api/alarms`, { mode: 'cors' });
     if (res.ok) {
@@ -544,6 +534,7 @@ async function saveAlarmSubmit(event) {
 }
 
 async function sendAlarmToESP(alarm) {
+  if (config.mode !== 'esp32' || window.location.protocol === 'https:') return;
   try {
     const formData = new URLSearchParams();
     formData.append('id', alarm.id);
