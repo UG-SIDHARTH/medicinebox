@@ -386,53 +386,126 @@ void handleTestAlarm() {
 
 void handleSaveConfig() {
   setCORSHeaders();
-  if (server.hasArg("ssid") && server.hasArg("pass")) {
-    preferences.putString("ssid", server.arg("ssid"));
-    preferences.putString("pass", server.arg("pass"));
-    if (server.hasArg("gmtOffset")) {
-      preferences.putLong("gmtOffset", server.arg("gmtOffset").toInt());
-    }
+  String ssid = "";
+  String pass = "";
 
-    server.send(200, "application/json", "{\"success\":true,\"message\":\"Configuration saved. Restarting ESP32...\"}");
-    delay(1500);
+  if (server.hasArg("ssid")) ssid = server.arg("ssid");
+  if (server.hasArg("pass")) pass = server.arg("pass");
+
+  if (ssid != "") {
+    preferences.putString("ssid", ssid);
+    preferences.putString("pass", pass);
+
+    String responseHtml = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Saving Wi-Fi...</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; text-align: center; padding: 40px 20px; }
+    .card { background: #1e293b; border-radius: 16px; padding: 30px; max-width: 450px; margin: 0 auto; box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+    h2 { color: #38bdf8; }
+    p { color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>✓ Settings Saved!</h2>
+    <p>Connecting to Wi-Fi network: <strong>)rawliteral" + ssid + R"rawliteral(</strong></p>
+    <p>Restarting Smart MedBox in 2 seconds...</p>
+  </div>
+</body>
+</html>
+)rawliteral";
+
+    server.send(200, "text/html", responseHtml);
+    delay(2000);
     ESP.restart();
   } else {
-    server.send(400, "application/json", "{\"error\":\"Missing SSID or Password\"}");
+    server.send(400, "text/html", "<h3>Error: Please select a Wi-Fi network</h3>");
   }
 }
 
 void handleRoot() {
   setCORSHeaders();
+  
+  // Scan for Wi-Fi Networks
+  int n = WiFi.scanNetworks();
+  String wifiOptions = "";
+  if (n <= 0) {
+    wifiOptions = "<option value=\"\">No Wi-Fi networks found</option>";
+  } else {
+    for (int i = 0; i < n; ++i) {
+      String ssidName = WiFi.SSID(i);
+      int rssi = WiFi.RSSI(i);
+      wifiOptions += "<option value=\"" + ssidName + "\">" + ssidName + " (" + String(rssi) + " dBm)</option>";
+    }
+  }
+
   String html = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart MedBox Dashboard</title>
+  <title>Smart MedBox Setup</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; text-align: center; }
-    .card { background: #1e293b; border-radius: 12px; padding: 20px; margin: 15px auto; max-width: 500px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
-    h1 { color: #38bdf8; font-size: 1.8rem; margin-bottom: 5px; }
-    .status { font-size: 1.2rem; margin: 10px 0; color: #4ade80; }
-    .btn { background: #0284c7; color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: bold; cursor: pointer; margin: 5px; }
+    .card { background: #1e293b; border-radius: 16px; padding: 24px; margin: 15px auto; max-width: 480px; box-shadow: 0 4px 16px rgba(0,0,0,0.4); text-align: left; }
+    h1 { color: #38bdf8; font-size: 1.8rem; margin-bottom: 5px; text-align: center; }
+    p.subtitle { color: #94a3b8; font-size: 0.9rem; text-align: center; margin-bottom: 20px; }
+    .status { font-size: 1.05rem; text-align: center; margin: 10px 0; color: #4ade80; background: rgba(74,222,128,0.1); padding: 8px; border-radius: 8px; }
+    .form-group { margin-bottom: 16px; }
+    label { display: block; font-weight: 600; font-size: 0.85rem; color: #cbd5e1; margin-bottom: 6px; }
+    input[type="text"], input[type="password"], select { width: 100%; padding: 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; font-size: 1rem; box-sizing: border-box; }
+    select option { background: #0f172a; color: #fff; }
+    .btn { background: #0284c7; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; font-size: 1rem; margin-top: 10px; }
     .btn:hover { background: #0369a1; }
-    .btn-danger { background: #e11d48; }
+    .btn-secondary { background: #334155; margin-top: 8px; }
+    .btn-secondary:hover { background: #475569; }
+    .btn-danger { background: #e11d48; margin-top: 8px; }
+    .btn-danger:hover { background: #be123c; }
+    .row-btns { display: flex; gap: 10px; margin-top: 15px; }
+    .row-btns .btn { width: 50%; }
+    hr { border: 0; height: 1px; background: #334155; margin: 20px 0; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>💊 Smart MedBox</h1>
-    <p>ESP32 Backend Server Active</p>
-    <div id="time" class="status">Loading Time...</div>
-    <p>Open the web dashboard for full schedule and timer management.</p>
-    <button class="btn" onclick="fetch('/api/test-alarm', {method:'POST'})">Test Buzzer & LEDs</button>
-    <button class="btn btn-danger" onclick="fetch('/api/take', {method:'POST'})">Mark Taken</button>
+    <p class="subtitle">Wi-Fi Setup & Device Management</p>
+    <div id="time" class="status">Loading ESP32 Status...</div>
+
+    <form action="/save" method="POST">
+      <div class="form-group">
+        <label>📶 Select Wi-Fi Network:</label>
+        <select name="ssid" required>
+)rawliteral" + wifiOptions + R"rawliteral(
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>🔑 Wi-Fi Password:</label>
+        <input type="password" name="pass" placeholder="Enter Wi-Fi Password" required>
+      </div>
+
+      <input type="submit" class="btn" value="Save & Connect Wi-Fi">
+    </form>
+
+    <hr>
+
+    <div class="row-btns">
+      <button class="btn btn-secondary" onclick="fetch('/api/test-alarm', {method:'POST'})">Test Alert</button>
+      <button class="btn btn-danger" onclick="fetch('/api/take', {method:'POST'})">Mark Taken</button>
+    </div>
   </div>
+
   <script>
     setInterval(() => {
       fetch('/api/status').then(r=>r.json()).then(d=>{
-        document.getElementById('time').innerText = 'ESP32 Time: ' + d.time;
+        document.getElementById('time').innerText = 'ESP32 Time: ' + d.time + ' | ' + (d.wifiConnected ? 'WiFi Connected' : 'AP Setup Mode');
       }).catch(()=>{});
     }, 1000);
   </script>
@@ -519,6 +592,7 @@ void setup() {
   }
 
   server.on("/", HTTP_GET, handleRoot);
+  server.on("/save", HTTP_POST, handleSaveConfig);
   server.on("/api/status", HTTP_GET, handleGetStatus);
   server.on("/api/alarms", HTTP_GET, handleGetAlarms);
   server.on("/api/alarms", HTTP_POST, handleSaveAlarm);
