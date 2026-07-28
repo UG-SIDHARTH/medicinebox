@@ -233,10 +233,21 @@ function publishMqttMessage(topic, payload) {
   }
 }
 
+let fetchFailCount = 0;
+
 async function fetchStatus() {
   try {
-    const res = await fetch(`http://${config.espIp}/api/status`, { mode: 'cors' });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    const res = await fetch(`http://${config.espIp}/api/status`, {
+      mode: 'cors',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
     if (res.ok) {
+      fetchFailCount = 0;
       const data = await res.json();
       telemetry = data;
       updateTelemetryUI(data);
@@ -246,7 +257,19 @@ async function fetchStatus() {
       updateConnectionBadge(false, "ESP32 Unreachable");
     }
   } catch (err) {
-    updateConnectionBadge(false, "Offline (Check IP)");
+    fetchFailCount++;
+    updateConnectionBadge(false, `Offline (${config.espIp} Timed Out)`);
+
+    if (fetchFailCount >= 3 && config.mode === 'esp32') {
+      console.warn("Local IP 10.249.18.38 unreachable across networks. Auto-switching to Cloud Sync.");
+      showToast("⚠️ Local IP unreachable on this network. Switching to Cloud Sync...", "info");
+      config.mode = 'cloud';
+      localStorage.setItem('medbox_mode', 'cloud');
+      const cfgSelect = document.getElementById('cfgMode');
+      if (cfgSelect) cfgSelect.value = 'cloud';
+      toggleModeInputs();
+      initNetworkConnection();
+    }
   }
 }
 
