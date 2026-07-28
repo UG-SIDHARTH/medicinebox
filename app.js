@@ -240,6 +240,7 @@ function publishMqttMessage(topic, payload) {
 let fetchFailCount = 0;
 
 async function fetchStatus() {
+  if (config.mode !== 'esp32') return; // Guard: Never execute HTTP fetch when in Cloud Mode
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
