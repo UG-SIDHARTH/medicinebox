@@ -524,24 +524,22 @@ void handleRoot() {
     <p class="subtitle">Wi-Fi Setup & Device Management</p>
     <div id="time" class="status">Loading ESP32 Status...</div>
 
-    <form id="wifiForm" onsubmit="submitWifiForm(event)">
+    <form action="/save" method="POST">
       <div class="form-group">
         <label>📶 Select Scanned Wi-Fi Network:</label>
-        <select id="ssidSelect">
+        <select id="ssidSelect" onchange="if(this.value) document.getElementById('ssidInput').value = this.value;">
           <option value="">⏳ Scanning (Fast <1s)...</option>
         </select>
       </div>
 
-      <div class="divider-text">── OR TYPE WI-FI NAME ──</div>
-
       <div class="form-group">
-        <label>✍️ Wi-Fi Name (SSID):</label>
-        <input type="text" id="manualSsid" placeholder="e.g. MyHomeWiFi">
+        <label>✍️ Wi-Fi Network Name (SSID):</label>
+        <input type="text" name="ssid" id="ssidInput" placeholder="e.g. UG_SIDHARTH" required>
       </div>
 
       <div class="form-group">
         <label>🔑 Wi-Fi Password:</label>
-        <input type="password" id="wifiPass" placeholder="Enter Wi-Fi Password" required>
+        <input type="password" name="pass" placeholder="Enter Wi-Fi Password" required>
       </div>
 
       <input type="submit" class="btn" value="Save & Connect Wi-Fi">
@@ -558,6 +556,7 @@ void handleRoot() {
   <script>
     function loadWifiNetworks() {
       const select = document.getElementById('ssidSelect');
+      const input = document.getElementById('ssidInput');
       fetch('/api/scan-wifi')
         .then(r => r.json())
         .then(networks => {
@@ -571,31 +570,6 @@ void handleRoot() {
         .catch(() => {
           select.innerHTML = '<option value="">Scan failed - Type name below</option>';
         });
-    }
-
-    function submitWifiForm(e) {
-      e.preventDefault();
-      const selectVal = document.getElementById('ssidSelect').value;
-      const manualVal = document.getElementById('manualSsid').value.trim();
-      const ssid = manualVal !== '' ? manualVal : selectVal;
-      const pass = document.getElementById('wifiPass').value;
-
-      if (!ssid) {
-        alert("Please select or type a Wi-Fi network name!");
-        return;
-      }
-
-      const formData = new URLSearchParams();
-      formData.append('ssid', ssid);
-      formData.append('pass', pass);
-
-      fetch('/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: formData
-      }).then(r => r.text()).then(html => {
-        document.body.innerHTML = html;
-      });
     }
 
     loadWifiNetworks();
