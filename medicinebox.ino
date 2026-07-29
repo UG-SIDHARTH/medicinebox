@@ -156,9 +156,37 @@ void loadAlarmsFromNVS() {
   }
 }
 
-// ==========================================
-// 4. API ENDPOINTS HANDLERS
-// ==========================================
+void getNextMedicineInfo(String &nextName, String &nextTime, int &minDiff) {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    nextName = "No Alarms";
+    nextTime = "--:--";
+    minDiff = 99999;
+    return;
+  }
+  int currentHour = timeinfo.tm_hour;
+  int currentMin = timeinfo.tm_min;
+  int currTotalMin = currentHour * 60 + currentMin;
+
+  nextName = "No Alarms";
+  nextTime = "--:--";
+  minDiff = 99999;
+
+  for (int i = 0; i < alarmCount; i++) {
+    if (alarms[i].active) {
+      int alarmTotalMin = alarms[i].hour * 60 + alarms[i].minute;
+      int diff = alarmTotalMin - currTotalMin;
+      if (diff < 0) diff += 1440;
+      if (diff < minDiff) {
+        minDiff = diff;
+        nextName = String(alarms[i].name);
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%02d:%02d", alarms[i].hour, alarms[i].minute);
+        nextTime = String(buf);
+      }
+    }
+  }
+}
 
 void handleCORSPreflight() {
   setCORSHeaders();
@@ -193,6 +221,11 @@ void handleGetStatus() {
     activeAlarmName = String(alarms[activeAlarmIndex].name);
   }
 
+  String nextMedName = "";
+  String nextMedTime = "";
+  int minDiff = 99999;
+  getNextMedicineInfo(nextMedName, nextMedTime, minDiff);
+
   String json = "{";
   json += "\"wifiConnected\":" +
           String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
@@ -210,6 +243,8 @@ void handleGetStatus() {
   json += "\"boxOpen\":" + String(boxOpen ? "true" : "false") + ",";
   json += "\"isAlarmActive\":" + String(isAlarmActive ? "true" : "false") + ",";
   json += "\"activeAlarmName\":\"" + activeAlarmName + "\",";
+  json += "\"nextMedName\":\"" + nextMedName + "\",";
+  json += "\"nextMedTime\":\"" + nextMedTime + "\",";
   json +=
       "\"greenLed\":" + String(digitalRead(greenLedPin) ? "true" : "false") +
       ",";
@@ -937,49 +972,30 @@ void loop() {
         snprintf(ipBuf, sizeof(ipBuf), "%-16.16s", ipStr.c_str());
         lcd.print(ipBuf);
       } else {
-        // Mode 2: Display Normal Time & Medicine Scrolling Marquee
-        char marqueeBuffer[40];
+        // Mode 2: Line 1 = Fixed NTP Time, Line 2 = Medicine Marquee
+        char line1Buf[17];
+        snprintf(line1Buf, sizeof(line1Buf), "TIME: %02d:%02d:%02d   ", currentHour, currentMin, currentSec);
+        lcd.setCursor(0, 0);
+        lcd.print(line1Buf);
 
-        String nextMedInfo = "No Active Alarms";
+        String nextName = "No Alarms";
+        String nextTime = "--:--";
         int minDiff = 99999;
-        for (int i = 0; i < alarmCount; i++) {
-          if (alarms[i].active) {
-            int alarmTotalMin = alarms[i].hour * 60 + alarms[i].minute;
-            int currTotalMin = currentHour * 60 + currentMin;
-            int diff = alarmTotalMin - currTotalMin;
-            if (diff < 0)
-              diff += 1440;
-            if (diff < minDiff) {
-              minDiff = diff;
-              char buf[32];
-              snprintf(buf, sizeof(buf), "%s @ %02d:%02d", alarms[i].name,
-                       alarms[i].hour, alarms[i].minute);
-              nextMedInfo = String(buf);
-            }
-          }
-        }
+        getNextMedicineInfo(nextName, nextTime, minDiff);
 
-        snprintf(marqueeBuffer, sizeof(marqueeBuffer),
-                 " Time %02d:%02d:%02d | Next: %s   ", currentHour, currentMin,
-                 currentSec, nextMedInfo.c_str());
+        char marqueeBuffer[64];
+        if (nextName != "No Alarms") {
+          snprintf(marqueeBuffer, sizeof(marqueeBuffer), "NEXT: %s @ %s   ", nextName.c_str(), nextTime.c_str());
+        } else {
+          snprintf(marqueeBuffer, sizeof(marqueeBuffer), "NEXT: No Alarms Scheduled   ");
+        }
 
         String scrollStr = String(marqueeBuffer);
-        if (scrollIndex > scrollStr.length() - 16)
-          scrollIndex = 0;
-
-        lcd.setCursor(0, 0);
-        lcd.print(scrollStr.substring(scrollIndex, scrollIndex + 16));
-        scrollIndex++;
+        if (scrollIndex > (int)scrollStr.length() - 16) scrollIndex = 0;
 
         lcd.setCursor(0, 1);
-        char statusLine[17];
-        if (WiFi.status() == WL_CONNECTED) {
-          snprintf(statusLine, sizeof(statusLine), "MedBox OK: %02d:%02d",
-                   currentHour, currentMin);
-        } else {
-          snprintf(statusLine, sizeof(statusLine), "AP: 192.168.4.1  ");
-        }
-        lcd.print(statusLine);
+        lcd.print(scrollStr.substring(scrollIndex, scrollIndex + 16));
+        scrollIndex++;
       }
     }
   }

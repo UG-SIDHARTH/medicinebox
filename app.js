@@ -412,6 +412,19 @@ function updateTelemetryUI(data) {
   if (greenLedText) greenLedText.innerText = data.greenLed ? "SOLID ON 🟢" : "OFF";
   if (rssiText) rssiText.innerText = `${data.rssi || -60} dBm`;
 
+  if (data.time && document.getElementById('headerTime')) {
+    document.getElementById('headerTime').innerText = data.time;
+  }
+  if (data.date && document.getElementById('headerDate')) {
+    document.getElementById('headerDate').innerText = data.date;
+  }
+  if (data.nextMedName && data.nextMedName !== "No Alarms") {
+    const nextNameEl = document.getElementById('nextMedName');
+    const nextTimeEl = document.getElementById('nextMedTime');
+    if (nextNameEl) nextNameEl.innerText = data.nextMedName;
+    if (nextTimeEl) nextTimeEl.innerText = `⏰ ${data.nextMedTime}`;
+  }
+
   const totalAlarms = alarms.length;
   const takenCount = data.takenCount || 0;
   document.getElementById('intakeRatio').innerText = `${takenCount} / ${totalAlarms} Taken`;
