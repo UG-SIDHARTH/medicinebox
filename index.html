@@ -129,7 +129,7 @@
           <div class="hw-item" id="hwBuzzer">
             <span class="hw-icon">🔊</span>
             <div class="hw-info">
-              <label>Buzzer</label>
+              <label>Active Buzzer (GPIO 25)</label>
               <strong id="buzzerStateText">OFF</strong>
             </div>
           </div>
@@ -281,10 +281,17 @@
         <div class="form-group">
           <label>Connection Mode</label>
           <select id="cfgMode" onchange="toggleModeInputs()">
-            <option value="cloud">☁️ Cloud Sync (Cross-Network / Different Wi-Fi / Remote Website)</option>
+            <option value="cloud">☁️ Cloud Sync (Cross-Network / MQTT Broker)</option>
+            <option value="tunnel">⚡ Cloudflare Tunnel (HTTPS Remote Access / trycloudflare.com)</option>
             <option value="esp32">📶 Local ESP32 IP Mode (Same Wi-Fi Network / 192.168.4.1 AP)</option>
             <option value="demo">🎮 Interactive Demo / Simulation Mode</option>
           </select>
+        </div>
+
+        <div class="form-group" id="tunnelUrlGroup">
+          <label>⚡ Cloudflare Tunnel URL</label>
+          <input type="text" id="cfgTunnelUrl" placeholder="e.g. https://medbox.yourdomain.com or https://xxxx.trycloudflare.com" />
+          <small class="help-text">Secure HTTPS URL created via cloudflared pointing to your ESP32</small>
         </div>
 
         <div class="form-group" id="espIpGroup">

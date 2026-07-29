@@ -22,6 +22,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
+#include "web_assets.h"
 
 // ==========================================
 // 1. HARDWARE PINS & PERIPHERALS
@@ -111,9 +112,9 @@ long readUltrasonicDistanceCm() {
 void setCORSHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods",
-                    "GET, POST, DELETE, OPTIONS");
+                    "GET, POST, DELETE, OPTIONS, PUT");
   server.sendHeader("Access-Control-Allow-Headers",
-                    "Content-Type, Authorization");
+                    "Content-Type, Authorization, X-Requested-With, CF-Connecting-IP, Cf-Access-Jwt-Assertion, X-CF-Secret");
 }
 
 void saveAlarmsToNVS() {
@@ -399,7 +400,7 @@ void handleTakeMedicine() {
   setCORSHeaders();
   isAlarmActive = false;
   activeAlarmIndex = -1;
-  noTone(buzzerPin);
+  digitalWrite(buzzerPin, LOW);
   buzzerState = false;
   redLedState = false;
   digitalWrite(redLedPin, LOW);
@@ -421,9 +422,9 @@ void handleTestAlarm() {
   setCORSHeaders();
   digitalWrite(redLedPin, HIGH);
   digitalWrite(greenLedPin, HIGH);
-  tone(buzzerPin, 1000);
+  digitalWrite(buzzerPin, HIGH);
   delay(1000);
-  noTone(buzzerPin);
+  digitalWrite(buzzerPin, LOW);
   digitalWrite(redLedPin, LOW);
   digitalWrite(greenLedPin, LOW);
 
@@ -499,9 +500,23 @@ void handleScanWiFi() {
   server.send(200, "application/json", json);
 }
 
+void handleTunnelStatus() {
+  setCORSHeaders();
+  String json = "{";
+  json += "\"tunnelReady\":true,";
+  json += "\"device\":\"Smart MedBox ESP32\",";
+  json += "\"ip\":\"" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : WiFi.softAPIP().toString()) + "\",";
+  json += "\"mac\":\"" + WiFi.macAddress() + "\",";
+  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+  json += "\"mqttConnected\":" + String(mqttClient.connected() ? "true" : "false");
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
 void handleRoot() {
   setCORSHeaders();
-  String html = R"rawliteral(
+  if (setupMode) {
+    String html = R"rawliteral(
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -513,90 +528,35 @@ void handleRoot() {
     .card { background: #1e293b; border-radius: 16px; padding: 24px; margin: 15px auto; max-width: 480px; box-shadow: 0 4px 16px rgba(0,0,0,0.4); text-align: left; }
     h1 { color: #38bdf8; font-size: 1.8rem; margin-bottom: 5px; text-align: center; }
     p.subtitle { color: #94a3b8; font-size: 0.9rem; text-align: center; margin-bottom: 20px; }
-    .status { font-size: 1.05rem; text-align: center; margin: 10px 0; color: #4ade80; background: rgba(74,222,128,0.1); padding: 8px; border-radius: 8px; }
     .form-group { margin-bottom: 16px; }
     label { display: block; font-weight: 600; font-size: 0.85rem; color: #cbd5e1; margin-bottom: 6px; }
     input[type="text"], input[type="password"], select { width: 100%; padding: 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: #fff; font-size: 1rem; box-sizing: border-box; }
-    select option { background: #0f172a; color: #fff; }
-    .divider-text { text-align: center; color: #64748b; font-size: 0.8rem; margin: 10px 0; font-weight: 600; }
     .btn { background: #0284c7; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; font-size: 1rem; margin-top: 10px; }
-    .btn:hover { background: #0369a1; }
-    .btn-secondary { background: #334155; margin-top: 8px; }
-    .btn-secondary:hover { background: #475569; }
-    .btn-danger { background: #e11d48; margin-top: 8px; }
-    .btn-danger:hover { background: #be123c; }
-    .row-btns { display: flex; gap: 10px; margin-top: 15px; }
-    .row-btns .btn { width: 50%; }
-    hr { border: 0; height: 1px; background: #334155; margin: 20px 0; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>💊 Smart MedBox</h1>
+    <h1>💊 Smart MedBox Setup</h1>
     <p class="subtitle">Wi-Fi Setup & Device Management</p>
-    <div id="time" class="status">Loading ESP32 Status...</div>
-
     <form action="/save" method="POST">
-      <div class="form-group">
-        <label>📶 Select Scanned Wi-Fi Network:</label>
-        <select id="ssidSelect" onchange="if(this.value) document.getElementById('ssidInput').value = this.value;">
-          <option value="">⏳ Scanning (Fast <1s)...</option>
-        </select>
-      </div>
-
       <div class="form-group">
         <label>✍️ Wi-Fi Network Name (SSID):</label>
         <input type="text" name="ssid" id="ssidInput" placeholder="e.g. UG_SIDHARTH" required>
       </div>
-
       <div class="form-group">
         <label>🔑 Wi-Fi Password:</label>
         <input type="password" name="pass" placeholder="Enter Wi-Fi Password" required>
       </div>
-
       <input type="submit" class="btn" value="Save & Connect Wi-Fi">
     </form>
-
-    <hr>
-
-    <div class="row-btns">
-      <button class="btn btn-secondary" onclick="fetch('/api/test-alarm', {method:'POST'})">Test Alert</button>
-      <button class="btn btn-danger" onclick="fetch('/api/take', {method:'POST'})">Mark Taken</button>
-    </div>
   </div>
-
-  <script>
-    function loadWifiNetworks() {
-      const select = document.getElementById('ssidSelect');
-      const input = document.getElementById('ssidInput');
-      fetch('/api/scan-wifi')
-        .then(r => r.json())
-        .then(networks => {
-          if (!networks || networks.length === 0) {
-            select.innerHTML = '<option value="">No Wi-Fi networks found</option>';
-          } else {
-            select.innerHTML = '<option value="">-- Choose Scanned Network --</option>' + 
-              networks.map(n => `<option value="${n.ssid}">${n.ssid} (${n.rssi} dBm)</option>`).join('');
-          }
-        })
-        .catch(() => {
-          select.innerHTML = '<option value="">Scan failed - Type name below</option>';
-        });
-    }
-
-    loadWifiNetworks();
-
-    setInterval(() => {
-      fetch('/api/status').then(r=>r.json()).then(d=>{
-        document.getElementById('time').innerText = 'ESP32 Time: ' + d.time + ' | ' + (d.wifiConnected ? 'WiFi Connected' : 'AP Setup Mode');
-      }).catch(()=>{});
-    }, 1000);
-  </script>
 </body>
 </html>
 )rawliteral";
-
-  server.send(200, "text/html", html);
+    server.send(200, "text/html", html);
+  } else {
+    server.send_P(200, "text/html", HTML_INDEX);
+  }
 }
 
 void publishStatusMQTT() {
@@ -728,7 +688,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (message.indexOf("take") != -1) {
       isAlarmActive = false;
       activeAlarmIndex = -1;
-      noTone(buzzerPin);
+      digitalWrite(buzzerPin, LOW);
       buzzerState = false;
       redLedState = false;
       digitalWrite(redLedPin, LOW);
@@ -738,9 +698,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     } else if (message.indexOf("test_alarm") != -1) {
       digitalWrite(redLedPin, HIGH);
       digitalWrite(greenLedPin, HIGH);
-      tone(buzzerPin, 1000);
+      digitalWrite(buzzerPin, HIGH);
       delay(1000);
-      noTone(buzzerPin);
+      digitalWrite(buzzerPin, LOW);
       digitalWrite(redLedPin, LOW);
       digitalWrite(greenLedPin, LOW);
       publishStatusMQTT();
@@ -792,7 +752,7 @@ void setup() {
   pinMode(echoPin, INPUT);
   pinMode(buttonPin, INPUT_PULLUP);
 
-  noTone(buzzerPin);
+  digitalWrite(buzzerPin, LOW);
   digitalWrite(redLedPin, LOW);
   digitalWrite(greenLedPin, LOW);
 
@@ -865,6 +825,7 @@ void setup() {
   server.on("/api/take", HTTP_POST, handleTakeMedicine);
   server.on("/api/test-alarm", HTTP_POST, handleTestAlarm);
   server.on("/api/config", HTTP_POST, handleSaveConfig);
+  server.on("/api/tunnel", HTTP_GET, handleTunnelStatus);
 
   server.on("/api/scan-wifi", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/status", HTTP_OPTIONS, handleCORSPreflight);
@@ -872,6 +833,7 @@ void setup() {
   server.on("/api/take", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/test-alarm", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/config", HTTP_OPTIONS, handleCORSPreflight);
+  server.on("/api/tunnel", HTTP_OPTIONS, handleCORSPreflight);
 
   server.begin();
   Serial.println("HTTP Server Started.");
@@ -1031,7 +993,7 @@ void loop() {
     if (currentDistanceCm > 0 &&
         currentDistanceCm < OPEN_DISTANCE_THRESHOLD_CM) {
       isAlarmActive = false;
-      noTone(buzzerPin);
+      digitalWrite(buzzerPin, LOW);
       buzzerState = false;
       redLedState = false;
       digitalWrite(redLedPin, LOW);
@@ -1058,11 +1020,7 @@ void loop() {
         redLedState = !redLedState;
         buzzerState = redLedState;
         digitalWrite(redLedPin, redLedState ? HIGH : LOW);
-        if (buzzerState) {
-          tone(buzzerPin, 1000);
-        } else {
-          noTone(buzzerPin);
-        }
+        digitalWrite(buzzerPin, buzzerState ? HIGH : LOW);
       }
 
       lcd.setCursor(0, 0);

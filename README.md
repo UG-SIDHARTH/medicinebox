@@ -47,11 +47,13 @@ An IoT-powered automated medicine reminder box and telemetry system built using 
 
 ```text
 medicinebox/
-├── medicinebox.ino   # ESP32 C++ Arduino firmware code
-├── index.html        # Web Dashboard HTML layout & modals
-├── app.js            # Frontend JavaScript, MQTT Cloud Sync & state logic
-├── styles.css        # Vanilla CSS design tokens & glassmorphism theme
-└── README.md         # Project documentation
+├── standalone_cloudflare_esp32.ino # Standalone ESP32 C++ firmware (NO LCD/Ultrasonic/Hardware required)
+├── medicinebox.ino                 # Complete ESP32 C++ firmware with hardware sensors & display
+├── index.html                      # Web Dashboard HTML layout & modals
+├── app.js                          # Frontend JavaScript, Cloudflare Tunnel & MQTT state logic
+├── styles.css                      # Vanilla CSS design tokens & glassmorphism theme
+├── setup_custom_domain_tunnel.bat  # Automated Cloudflare Tunnel ID creator for mediback.ugsidharth.in
+└── README.md                       # Project documentation
 ```
 
 ---
@@ -59,13 +61,8 @@ medicinebox/
 ## 🚀 Quick Setup & Deployment Guide
 
 ### 1. Flashing the ESP32 Firmware
-1. Open [`medicinebox.ino`](file:///c:/Users/Lenovo/Downloads/medicine_reminder_box/medicinebox/medicinebox.ino) in **Arduino IDE**.
-2. Install required libraries via Library Manager:
-   * `LiquidCrystal_I2C`
-   * `PubSubClient`
-   * `Preferences` (builtin)
-   * `WiFi` (builtin)
-3. Select board **ESP32 Dev Module** and click **Upload**.
+* **Option A (No Hardware Connected - Recommended)**: Open [`standalone_cloudflare_esp32.ino`](file:///c:/Users/Lenovo/Downloads/medicine_reminder_box/medicinebox/standalone_cloudflare_esp32.ino) in **Arduino IDE**. No external libraries required (uses builtin `WiFi`, `WebServer`, `Preferences`). Select board **ESP32 Dev Module** and click **Upload**.
+* **Option B (Full Hardware Box)**: Open [`medicinebox.ino`](file:///c:/Users/Lenovo/Downloads/medicine_reminder_box/medicinebox/medicinebox.ino) in **Arduino IDE**. Install `LiquidCrystal_I2C` and `PubSubClient`, then click **Upload**.
 
 ### 2. Wi-Fi Configuration
 * If the ESP32 has no saved Wi-Fi credentials, it starts in AP mode (**`MedBox-Setup`**).
@@ -79,6 +76,15 @@ medicinebox/
    ```
 2. Open your website (e.g. `https://medicinebox.ugsidharth.in`).
 3. Click **⚙️ Config** and verify **`☁️ Cloud Sync`** mode is active.
+
+### 4. ⚡ Cloudflare Tunnel (Secure HTTPS Remote Access)
+1. Run [`cloudflared_runner.bat`](file:///c:/Users/Lenovo/Downloads/medicine_reminder_box/medicinebox/cloudflared_runner.bat) or run:
+   ```bash
+   cloudflared tunnel --url http://YOUR_ESP32_IP:80
+   ```
+2. Copy the generated `https://xxxx.trycloudflare.com` URL.
+3. Open the Web Dashboard, click **⚙️ Config**, select **`⚡ Cloudflare Tunnel`**, paste your URL, and click **Save Settings**.
+4. For detailed custom domain setup, read [`CLOUDFLARE_TUNNEL_GUIDE.md`](file:///c:/Users/Lenovo/Downloads/medicine_reminder_box/medicinebox/CLOUDFLARE_TUNNEL_GUIDE.md).
 
 ---
 

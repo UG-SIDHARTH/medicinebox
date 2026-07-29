@@ -3,13 +3,11 @@
    ========================================================================== */
 
 // --- Global State ---
-// Force reset to 'cloud' mode to stop all 10.249.18.38 local IP requests
-localStorage.setItem('medbox_mode', 'cloud');
-
 let config = {
-  mode: 'cloud', // Fixed to Cloud Sync Mode for cross-network operation
-  espIp: '192.168.4.1',
-  pollInterval: 1000
+  mode: localStorage.getItem('medbox_mode') || 'cloud',
+  espIp: localStorage.getItem('medbox_esp_ip') || '192.168.4.1',
+  tunnelUrl: localStorage.getItem('medbox_tunnel_url') || '',
+  pollInterval: 1500
 };
 
 let alarms = [
@@ -134,14 +132,98 @@ function initNetworkConnection() {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  if (cloudCheckInterval) {
+    clearInterval(cloudCheckInterval);
+    cloudCheckInterval = null;
+  }
   if (mqttClient) {
     try { mqttClient.end(); } catch (e) {}
     mqttClient = null;
   }
 
-  // Force Cloud Sync mode for all network connections
-  config.mode = 'cloud';
-  initMqttCloudSync();
+  config.mode = localStorage.getItem('medbox_mode') || (window.location.hostname.includes('ugsidharth.in') ? 'tunnel' : 'cloud');
+  config.espIp = localStorage.getItem('medbox_esp_ip') || '192.168.4.1';
+  config.tunnelUrl = localStorage.getItem('medbox_tunnel_url') || (window.location.protocol.startsWith('http') ? window.location.origin : '');
+
+  if (config.mode === 'cloud') {
+    initMqttCloudSync();
+  } else if (config.mode === 'tunnel') {
+    initTunnelMode();
+  } else if (config.mode === 'esp32') {
+    initLocalEsp32Mode();
+  } else {
+    updateConnectionBadge(true, "🎮 Simulation Mode");
+  }
+}
+
+function initLocalEsp32Mode() {
+  updateConnectionBadge(true, `Connecting ${config.espIp}...`);
+  fetchStatus();
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(fetchStatus, config.pollInterval || 2000);
+}
+
+function initTunnelMode() {
+  if (!config.tunnelUrl && window.location.protocol.startsWith('http')) {
+    config.tunnelUrl = window.location.origin;
+  }
+  if (!config.tunnelUrl) {
+    updateConnectionBadge(false, "⚡ Tunnel URL Missing");
+    return;
+  }
+
+  let baseUrl = config.tunnelUrl.trim().replace(/\/+$/, "");
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+    baseUrl = "https://" + baseUrl;
+  }
+  config.cleanTunnelUrl = baseUrl;
+
+  updateConnectionBadge(true, "⚡ Connecting Cloudflare Tunnel...");
+  fetchTunnelStatus();
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(fetchTunnelStatus, config.pollInterval || 2000);
+}
+
+async function fetchTunnelStatus() {
+  if (config.mode !== 'tunnel' || !config.cleanTunnelUrl) return;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const res = await fetch(`${config.cleanTunnelUrl}/api/status`, {
+      mode: 'cors',
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      fetchFailCount = 0;
+      const data = await res.json();
+      telemetry = data;
+      updateTelemetryUI(data);
+      updateConnectionBadge(true, `⚡ Cloudflare Tunnel Active`);
+      fetchAlarmsFromTunnel();
+    } else {
+      updateConnectionBadge(false, `⚡ Tunnel Error (HTTP ${res.status})`);
+    }
+  } catch (err) {
+    fetchFailCount++;
+    updateConnectionBadge(false, `⚡ Tunnel Unreachable`);
+  }
+}
+
+async function fetchAlarmsFromTunnel() {
+  if (config.mode !== 'tunnel' || !config.cleanTunnelUrl) return;
+  try {
+    const res = await fetch(`${config.cleanTunnelUrl}/api/alarms`, { mode: 'cors' });
+    if (res.ok) {
+      const data = await res.json();
+      alarms = data;
+      renderAlarms();
+    }
+  } catch (e) {
+    console.error("Failed to fetch alarms via tunnel:", e);
+  }
 }
 
 let lastMqttTelemetryTime = 0;
@@ -284,11 +366,12 @@ function updateConnectionBadge(isConnected, label) {
   const text = document.getElementById('connectionText');
   
   let cls = 'demo-mode';
-  if (config.mode === 'cloud') cls = isConnected ? 'connected' : 'disconnected';
-  else if (config.mode === 'esp32') cls = isConnected ? 'connected' : 'disconnected';
+  if (config.mode === 'cloud' || config.mode === 'esp32' || config.mode === 'tunnel') {
+    cls = isConnected ? 'connected' : 'disconnected';
+  }
   
-  badge.className = 'connection-badge ' + cls;
-  text.innerText = label;
+  if (badge) badge.className = 'connection-badge ' + cls;
+  if (text) text.innerText = label;
 }
 
 function updateTelemetryUI(data) {
@@ -316,7 +399,15 @@ function updateTelemetryUI(data) {
   const greenLedText = document.getElementById('greenLedText');
   const rssiText = document.getElementById('rssiText');
 
-  if (buzzerText) buzzerText.innerText = data.buzzer || data.isAlarmActive ? "RINGING 🔊" : "OFF";
+  if (buzzerText) {
+    if (data.buzzer || data.isAlarmActive) {
+      buzzerText.innerText = "ACTIVE RINGING 🔊 (GPIO 25)";
+      buzzerText.style.color = "#f43f5e";
+    } else {
+      buzzerText.innerText = "OFF (Active High)";
+      buzzerText.style.color = "#94a3b8";
+    }
+  }
   if (redLedText) redLedText.innerText = data.redLed || data.isAlarmActive ? "FLASHING 🔴" : "OFF";
   if (greenLedText) greenLedText.innerText = data.greenLed ? "SOLID ON 🟢" : "OFF";
   if (rssiText) rssiText.innerText = `${data.rssi || -60} dBm`;
@@ -373,7 +464,7 @@ async function toggleAlarmActive(id, active) {
     alarm.active = active;
     if (config.mode === 'cloud') {
       publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
-    } else if (config.mode === 'esp32') {
+    } else if (config.mode === 'tunnel' || config.mode === 'esp32') {
       await sendAlarmToESP(alarm);
     }
     showToast(`Timer "${alarm.name}" ${active ? 'enabled' : 'disabled'}`, 'info');
@@ -387,6 +478,10 @@ async function deleteAlarm(id) {
   alarms = alarms.filter(a => a.id !== id);
   if (config.mode === 'cloud') {
     publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
+  } else if (config.mode === 'tunnel' && config.cleanTunnelUrl) {
+    try {
+      await fetch(`${config.cleanTunnelUrl}/api/alarms?id=${id}`, { method: 'DELETE', mode: 'cors' });
+    } catch (e) { console.error("Delete failed via tunnel:", e); }
   } else if (config.mode === 'esp32') {
     try {
       await fetch(`http://${config.espIp}/api/alarms?id=${id}`, { method: 'DELETE', mode: 'cors' });
@@ -426,6 +521,10 @@ async function triggerMarkTaken() {
 
   if (config.mode === 'cloud') {
     publishMqttMessage(MQTT_TOPIC_COMMANDS, { action: "take" });
+  } else if (config.mode === 'tunnel' && config.cleanTunnelUrl) {
+    try {
+      await fetch(`${config.cleanTunnelUrl}/api/take`, { method: 'POST', mode: 'cors' });
+    } catch (e) { console.error(e); }
   } else if (config.mode === 'esp32') {
     try {
       await fetch(`http://${config.espIp}/api/take`, { method: 'POST', mode: 'cors' });
@@ -435,8 +534,31 @@ async function triggerMarkTaken() {
   showToast("✓ Medicine intake recorded!", 'success');
 }
 
+function playBrowserAudioBeep(durationMs = 1000) {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(2700, ctx.currentTime);
+
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + (durationMs / 1000));
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + (durationMs / 1000));
+  } catch (e) {}
+}
+
 async function triggerTestBuzzer() {
-  showToast("🔔 Triggered hardware buzzer & LED test", 'info');
+  showToast("🔔 Active Buzzer (GPIO 25) & LED Test Triggered", 'info');
+  playBrowserAudioBeep(1000);
   telemetry.redLed = true;
   telemetry.greenLed = true;
   telemetry.buzzer = true;
@@ -447,10 +569,14 @@ async function triggerTestBuzzer() {
     telemetry.greenLed = false;
     telemetry.buzzer = false;
     updateTelemetryUI(telemetry);
-  }, 2000);
+  }, 1000);
 
   if (config.mode === 'cloud') {
     publishMqttMessage(MQTT_TOPIC_COMMANDS, { action: "test_alarm" });
+  } else if (config.mode === 'tunnel' && config.cleanTunnelUrl) {
+    try {
+      await fetch(`${config.cleanTunnelUrl}/api/test-alarm`, { method: 'POST', mode: 'cors' });
+    } catch (e) { console.error(e); }
   } else if (config.mode === 'esp32') {
     try {
       await fetch(`http://${config.espIp}/api/test-alarm`, { method: 'POST', mode: 'cors' });
@@ -524,7 +650,7 @@ async function saveAlarmSubmit(event) {
 
   if (config.mode === 'cloud') {
     publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
-  } else if (config.mode === 'esp32') {
+  } else if (config.mode === 'tunnel' || config.mode === 'esp32') {
     await sendAlarmToESP(alarm);
   }
 
@@ -534,18 +660,26 @@ async function saveAlarmSubmit(event) {
 }
 
 async function sendAlarmToESP(alarm) {
-  if (config.mode !== 'esp32' || window.location.protocol === 'https:') return;
-  try {
-    const formData = new URLSearchParams();
-    formData.append('id', alarm.id);
-    formData.append('name', alarm.name);
-    formData.append('hour', alarm.hour);
-    formData.append('minute', alarm.minute);
-    formData.append('dosage', alarm.dosage);
-    formData.append('color', alarm.color);
-    formData.append('active', alarm.active ? '1' : '0');
+  const formData = new URLSearchParams();
+  formData.append('id', alarm.id);
+  formData.append('name', alarm.name);
+  formData.append('hour', alarm.hour);
+  formData.append('minute', alarm.minute);
+  formData.append('dosage', alarm.dosage);
+  formData.append('color', alarm.color);
+  formData.append('active', alarm.active ? '1' : '0');
 
-    await fetch(`http://${config.espIp}/api/alarms`, {
+  let targetUrl = '';
+  if (config.mode === 'tunnel' && config.cleanTunnelUrl) {
+    targetUrl = `${config.cleanTunnelUrl}/api/alarms`;
+  } else if (config.mode === 'esp32' && window.location.protocol !== 'https:') {
+    targetUrl = `http://${config.espIp}/api/alarms`;
+  } else {
+    return;
+  }
+
+  try {
+    await fetch(targetUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: formData,
@@ -600,25 +734,41 @@ function closeConfigModal() {
 function loadConfigToForm() {
   const modeEl = document.getElementById('cfgMode');
   const ipEl = document.getElementById('cfgEspIp');
+  const tunnelEl = document.getElementById('cfgTunnelUrl');
+
   if (modeEl) modeEl.value = config.mode || 'cloud';
   if (ipEl) ipEl.value = config.espIp || '192.168.4.1';
+  if (tunnelEl) tunnelEl.value = config.tunnelUrl || '';
   toggleModeInputs();
 }
 
 function toggleModeInputs() {
   const modeEl = document.getElementById('cfgMode');
   const ipGroup = document.getElementById('espIpGroup');
-  if (ipGroup) ipGroup.style.display = (modeEl && modeEl.value === 'esp32') ? 'block' : 'none';
+  const tunnelGroup = document.getElementById('tunnelUrlGroup');
+  const mode = modeEl ? modeEl.value : 'cloud';
+
+  if (ipGroup) ipGroup.style.display = (mode === 'esp32') ? 'block' : 'none';
+  if (tunnelGroup) tunnelGroup.style.display = (mode === 'tunnel') ? 'block' : 'none';
 }
 
 async function saveConfigSubmit(e) {
   if (e && e.preventDefault) e.preventDefault();
-  config.mode = 'cloud';
-  localStorage.setItem('medbox_mode', 'cloud');
+  const mode = document.getElementById('cfgMode').value;
+  const espIp = document.getElementById('cfgEspIp').value.trim();
+  const tunnelUrl = document.getElementById('cfgTunnelUrl').value.trim();
+
+  config.mode = mode;
+  config.espIp = espIp || '192.168.4.1';
+  config.tunnelUrl = tunnelUrl;
+
+  localStorage.setItem('medbox_mode', mode);
+  localStorage.setItem('medbox_esp_ip', config.espIp);
+  localStorage.setItem('medbox_tunnel_url', tunnelUrl);
 
   closeConfigModal();
   initNetworkConnection();
-  showToast("Cloud Sync Settings Saved!", "success");
+  showToast(`Settings Saved (${mode.toUpperCase()} mode)`, "success");
 }
 
 // --- Toast Utilities ---
