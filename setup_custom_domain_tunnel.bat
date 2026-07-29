@@ -47,8 +47,8 @@ echo [STEP 3/5] Routing DNS record for %SUBDOMAIN% to tunnel %TUNNEL_NAME% ...
 %CLOUDFLARED_CMD% tunnel route dns %TUNNEL_NAME% %SUBDOMAIN%
 
 echo.
-set /p ESP_IP="Enter your ESP32 local IP address (default: 192.168.4.1): "
-if "%ESP_IP%"=="" set ESP_IP=192.168.4.1
+set /p ESP_IP="Enter your ESP32 local IP address (default: 192.168.31.190): "
+if "%ESP_IP%"=="" set ESP_IP=192.168.31.190
 
 echo.
 echo [STEP 4/5] Generating config.yml ...

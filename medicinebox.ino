@@ -548,6 +548,15 @@ void handleTunnelStatus() {
   server.send(200, "application/json", json);
 }
 
+void handleNotFound() {
+  setCORSHeaders();
+  if (server.method() == HTTP_OPTIONS) {
+    server.send(204);
+  } else {
+    server.send(404, "text/plain", "404 Not Found");
+  }
+}
+
 void handleRoot() {
   setCORSHeaders();
   if (setupMode) {
@@ -870,6 +879,7 @@ void setup() {
   server.on("/api/config", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/tunnel", HTTP_OPTIONS, handleCORSPreflight);
 
+  server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("HTTP Server Started.");
 
