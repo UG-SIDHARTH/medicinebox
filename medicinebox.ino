@@ -18,7 +18,6 @@
 #include "time.h"
 #include <LiquidCrystal_I2C.h>
 #include <Preferences.h>
-#include <PubSubClient.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -76,16 +75,6 @@ bool greenLedState = false;
 bool redLedState = false;
 bool buzzerState = false;
 
-// MQTT Cloud Config for medicinebox.ugsidharth.in
-WiFiClient espClient;
-PubSubClient mqttClient(espClient);
-const char *mqtt_server = "broker.hivemq.com";
-const int mqtt_port = 1883;
-const char *mqtt_topic_telemetry = "ug_sidharth/medbox/telemetry";
-const char *mqtt_topic_commands = "ug_sidharth/medbox/commands";
-const char *mqtt_topic_alarms = "ug_sidharth/medbox/alarms";
-unsigned long lastMqttPublish = 0;
-
 // Display & Button Timing
 unsigned long lastScrollTime = 0;
 int scrollIndex = 0;
@@ -112,9 +101,9 @@ long readUltrasonicDistanceCm() {
 void setCORSHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods",
-                    "GET, POST, DELETE, OPTIONS, PUT");
+                    "GET, POST, DELETE, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers",
-                    "Content-Type, Authorization, X-Requested-With, CF-Connecting-IP, Cf-Access-Jwt-Assertion, X-CF-Secret");
+                    "Content-Type, Authorization");
 }
 
 void saveAlarmsToNVS() {
@@ -535,19 +524,6 @@ void handleScanWiFi() {
   server.send(200, "application/json", json);
 }
 
-void handleTunnelStatus() {
-  setCORSHeaders();
-  String json = "{";
-  json += "\"tunnelReady\":true,";
-  json += "\"device\":\"Smart MedBox ESP32\",";
-  json += "\"ip\":\"" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : WiFi.softAPIP().toString()) + "\",";
-  json += "\"mac\":\"" + WiFi.macAddress() + "\",";
-  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
-  json += "\"mqttConnected\":" + String(mqttClient.connected() ? "true" : "false");
-  json += "}";
-  server.send(200, "application/json", json);
-}
-
 void handleNotFound() {
   setCORSHeaders();
   if (server.method() == HTTP_OPTIONS) {
@@ -603,185 +579,7 @@ void handleRoot() {
   }
 }
 
-void publishStatusMQTT() {
-  if (!mqttClient.connected()) return;
-
-  struct tm timeinfo;
-  bool hasTime = getLocalTime(&timeinfo);
-  char timeStr[16] = "00:00:00";
-  char dateStr[16] = "1970-01-01";
-  int hour = 0, minute = 0, second = 0;
-
-  if (hasTime) {
-    snprintf(timeStr, sizeof(timeStr), "%02d:%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-    snprintf(dateStr, sizeof(dateStr), "%04d-%02d-%02d", timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday);
-    hour = timeinfo.tm_hour;
-    minute = timeinfo.tm_min;
-    second = timeinfo.tm_sec;
-  }
-
-  bool boxOpen = (currentDistanceCm > 0 && currentDistanceCm < OPEN_DISTANCE_THRESHOLD_CM);
-  String activeAlarmName = "";
-  if (isAlarmActive && activeAlarmIndex >= 0 && activeAlarmIndex < alarmCount) {
-    activeAlarmName = String(alarms[activeAlarmIndex].name);
-  }
-
-  String json = "{";
-  json += "\"wifiConnected\":" + String(WiFi.status() == WL_CONNECTED ? "true" : "false") + ",";
-  json += "\"ip\":\"" + (WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : WiFi.softAPIP().toString()) + "\",";
-  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
-  json += "\"time\":\"" + String(timeStr) + "\",";
-  json += "\"date\":\"" + String(dateStr) + "\",";
-  json += "\"hour\":" + String(hour) + ",";
-  json += "\"minute\":" + String(minute) + ",";
-  json += "\"second\":" + String(second) + ",";
-  json += "\"distance\":" + String(currentDistanceCm) + ",";
-  json += "\"boxOpen\":" + String(boxOpen ? "true" : "false") + ",";
-  json += "\"isAlarmActive\":" + String(isAlarmActive ? "true" : "false") + ",";
-  json += "\"activeAlarmName\":\"" + activeAlarmName + "\",";
-  json += "\"greenLed\":" + String(digitalRead(greenLedPin) ? "true" : "false") + ",";
-  json += "\"redLed\":" + String(redLedState ? "true" : "false") + ",";
-  json += "\"buzzer\":" + String(buzzerState ? "true" : "false") + ",";
-  json += "\"setupMode\":" + String(setupMode ? "true" : "false") + ",";
-  json += "\"alarmCount\":" + String(alarmCount) + ",";
-  json += "\"takenCount\":" + String(takenCountToday);
-  json += "}";
-
-  mqttClient.publish(mqtt_topic_telemetry, json.c_str());
-}
-
-void parseMqttAlarms(String payload) {
-  if (payload.indexOf('[') == -1 || payload.indexOf(']') == -1) return;
-  
-  int newCount = 0;
-  int pos = 0;
-  
-  while ((pos = payload.indexOf('{', pos)) != -1 && newCount < MAX_ALARMS) {
-    int endPos = payload.indexOf('}', pos);
-    if (endPos == -1) break;
-    
-    String item = payload.substring(pos, endPos + 1);
-    
-    int idVal = newCount + 1;
-    if (item.indexOf("\"id\":") != -1) {
-      int s = item.indexOf("\"id\":") + 5;
-      idVal = item.substring(s, item.indexOf(",", s)).toInt();
-    }
-    
-    String nameVal = "Medicine";
-    if (item.indexOf("\"name\":\"") != -1) {
-      int s = item.indexOf("\"name\":\"") + 8;
-      nameVal = item.substring(s, item.indexOf("\"", s));
-    }
-    
-    int hourVal = 8;
-    if (item.indexOf("\"hour\":") != -1) {
-      int s = item.indexOf("\"hour\":") + 7;
-      hourVal = item.substring(s, item.indexOf(",", s)).toInt();
-    }
-    
-    int minVal = 0;
-    if (item.indexOf("\"minute\":") != -1) {
-      int s = item.indexOf("\"minute\":") + 9;
-      minVal = item.substring(s, item.indexOf(",", s)).toInt();
-    }
-    
-    String dosageVal = "1 Dose";
-    if (item.indexOf("\"dosage\":\"") != -1) {
-      int s = item.indexOf("\"dosage\":\"") + 10;
-      dosageVal = item.substring(s, item.indexOf("\"", s));
-    }
-    
-    String colorVal = "#3b82f6";
-    if (item.indexOf("\"color\":\"") != -1) {
-      int s = item.indexOf("\"color\":\"") + 9;
-      colorVal = item.substring(s, item.indexOf("\"", s));
-    }
-    
-    bool activeVal = (item.indexOf("\"active\":false") == -1);
-    
-    alarms[newCount].id = idVal;
-    strncpy(alarms[newCount].name, nameVal.c_str(), 32);
-    alarms[newCount].hour = hourVal;
-    alarms[newCount].minute = minVal;
-    strncpy(alarms[newCount].dosage, dosageVal.c_str(), 32);
-    strncpy(alarms[newCount].color, colorVal.c_str(), 10);
-    alarms[newCount].active = activeVal;
-    alarms[newCount].triggeredToday = false;
-    
-    if (idVal >= nextAlarmId) nextAlarmId = idVal + 1;
-    newCount++;
-    pos = endPos + 1;
-  }
-  
-  if (newCount > 0) {
-    alarmCount = newCount;
-    saveAlarmsToNVS();
-    Serial.println("Updated alarms from MQTT Cloud!");
-    publishStatusMQTT();
-  }
-}
-
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String message = "";
-  for (unsigned int i = 0; i < length; i++) {
-    message += (char)payload[i];
-  }
-
-  if (String(topic) == mqtt_topic_commands) {
-    if (message.indexOf("take") != -1) {
-      isAlarmActive = false;
-      activeAlarmIndex = -1;
-      digitalWrite(buzzerPin, LOW);
-      buzzerState = false;
-      redLedState = false;
-      digitalWrite(redLedPin, LOW);
-      digitalWrite(greenLedPin, HIGH);
-      takenCountToday++;
-      publishStatusMQTT();
-    } else if (message.indexOf("test_alarm") != -1) {
-      digitalWrite(redLedPin, HIGH);
-      digitalWrite(greenLedPin, HIGH);
-      digitalWrite(buzzerPin, HIGH);
-      delay(1000);
-      digitalWrite(buzzerPin, LOW);
-      digitalWrite(redLedPin, LOW);
-      digitalWrite(greenLedPin, LOW);
-      publishStatusMQTT();
-    }
-  } else if (String(topic) == mqtt_topic_alarms) {
-    parseMqttAlarms(message);
-  }
-}
-
-void reconnectMQTT() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  static unsigned long lastReconnectAttempt = 0;
-  static int serverIndex = 0;
-  const char* servers[] = {"broker.emqx.io", "broker.hivemq.com"};
-
-  if (millis() - lastReconnectAttempt > 4000) {
-    lastReconnectAttempt = millis();
-    const char* targetServer = servers[serverIndex % 2];
-    mqttClient.setServer(targetServer, 1883);
-
-    String clientId = "ESP32MedBox-" + String(random(0xffff), HEX);
-    Serial.print("Connecting MQTT to ");
-    Serial.print(targetServer);
-    Serial.println("...");
-
-    if (mqttClient.connect(clientId.c_str())) {
-      Serial.println("✓ MQTT Connected successfully!");
-      mqttClient.subscribe(mqtt_topic_commands);
-      mqttClient.subscribe(mqtt_topic_alarms);
-      publishStatusMQTT();
-    } else {
-      Serial.print("MQTT Connection Failed, state=");
-      Serial.println(mqttClient.state());
-      serverIndex++;
-    }
-  }
-}
+// (MQTT Functions Removed)
 
 // ==========================================
 // 5. SETUP
@@ -869,7 +667,6 @@ void setup() {
   server.on("/api/take", HTTP_POST, handleTakeMedicine);
   server.on("/api/test-alarm", HTTP_POST, handleTestAlarm);
   server.on("/api/config", HTTP_POST, handleSaveConfig);
-  server.on("/api/tunnel", HTTP_GET, handleTunnelStatus);
 
   server.on("/api/scan-wifi", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/status", HTTP_OPTIONS, handleCORSPreflight);
@@ -877,15 +674,19 @@ void setup() {
   server.on("/api/take", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/test-alarm", HTTP_OPTIONS, handleCORSPreflight);
   server.on("/api/config", HTTP_OPTIONS, handleCORSPreflight);
-  server.on("/api/tunnel", HTTP_OPTIONS, handleCORSPreflight);
 
   server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("HTTP Server Started.");
-
-  mqttClient.setServer(mqtt_server, mqtt_port);
-  mqttClient.setBufferSize(2048);
-  mqttClient.setCallback(mqttCallback);
+  Serial.println("\n=======================================================");
+  Serial.println("   💊 SMART MEDBOX - ARDUINO IDE SERIAL TEST MONITOR   ");
+  Serial.println("=======================================================");
+  Serial.println("Type one of the following commands in Serial Monitor:");
+  Serial.println("  'test'   -> Test Active Buzzer (GPIO 25), Red/Green LEDs & LCD");
+  Serial.println("  'status' -> Show WiFi, IP address & Ultrasonic distance");
+  Serial.println("  'take'   -> Record medicine intake test");
+  Serial.println("  'help'   -> Show command menu");
+  Serial.println("=======================================================\n");
 }
 
 // ==========================================
@@ -894,15 +695,60 @@ void setup() {
 void loop() {
   server.handleClient();
 
-  if (WiFi.status() == WL_CONNECTED) {
-    if (!mqttClient.connected()) {
-      reconnectMQTT();
-    }
-    mqttClient.loop();
+  // --- ARDUINO IDE SERIAL MONITOR COMMAND INTERFACE ---
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    cmd.toLowerCase();
 
-    if (millis() - lastMqttPublish > 1000) {
-      lastMqttPublish = millis();
-      publishStatusMQTT();
+    if (cmd == "test") {
+      Serial.println("\n[SERIAL TEST] Testing Active Buzzer (GPIO 25), LEDs & LCD...");
+      digitalWrite(redLedPin, HIGH);
+      digitalWrite(greenLedPin, HIGH);
+      digitalWrite(buzzerPin, HIGH);
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("TEST ALERT MODE");
+      lcd.setCursor(0, 1);
+      lcd.print("Buzzer & LEDs ON");
+      delay(1500);
+      digitalWrite(buzzerPin, LOW);
+      digitalWrite(redLedPin, LOW);
+      digitalWrite(greenLedPin, LOW);
+      lcd.clear();
+      Serial.println("[SERIAL TEST] ✓ Active Buzzer, Red LED, Green LED & LCD Test Passed!");
+    } else if (cmd == "status") {
+      Serial.println("\n==========================================");
+      Serial.println("         ESP32 MEDBOX DIAGNOSTICS         ");
+      Serial.println("==========================================");
+      Serial.print("Wi-Fi Status: "); Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "AP Mode / Disconnected");
+      Serial.print("Local IP:     "); Serial.println(WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : WiFi.softAPIP().toString());
+      Serial.print("Wi-Fi RSSI:   "); Serial.print(WiFi.RSSI()); Serial.println(" dBm");
+      Serial.print("Ultrasonic:   "); Serial.print(readUltrasonicDistanceCm()); Serial.println(" cm");
+      Serial.print("Buzzer Pin:   "); Serial.println("25 (Active High)");
+      Serial.print("Alarms Set:   "); Serial.println(alarmCount);
+      Serial.println("==========================================\n");
+    } else if (cmd == "take") {
+      Serial.println("\n[SERIAL TEST] Simulating Medicine Intake...");
+      isAlarmActive = false;
+      digitalWrite(buzzerPin, LOW);
+      digitalWrite(redLedPin, LOW);
+      digitalWrite(greenLedPin, HIGH);
+      takenCountToday++;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Medicine Taken!");
+      delay(2000);
+      digitalWrite(greenLedPin, LOW);
+      lcd.clear();
+      Serial.println("[SERIAL TEST] ✓ Pill Intake Recorded!");
+    } else if (cmd == "help") {
+      Serial.println("\n--- Arduino IDE Serial Commands ---");
+      Serial.println("  test   -> Test Active Buzzer (GPIO 25), Red/Green LEDs & LCD");
+      Serial.println("  status -> Print hardware telemetry & IP status");
+      Serial.println("  take   -> Record medicine intake");
+      Serial.println("  help   -> Show command menu");
+      Serial.println("----------------------------------\n");
     }
   }
 

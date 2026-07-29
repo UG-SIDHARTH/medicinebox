@@ -281,23 +281,15 @@
         <div class="form-group">
           <label>Connection Mode</label>
           <select id="cfgMode" onchange="toggleModeInputs()">
-            <option value="cloud">☁️ Cloud Sync (Cross-Network / MQTT Broker)</option>
-            <option value="tunnel">⚡ Cloudflare Tunnel (HTTPS Remote Access / trycloudflare.com)</option>
-            <option value="esp32">📶 Local ESP32 IP Mode (Same Wi-Fi Network / 192.168.4.1 AP)</option>
+            <option value="esp32" selected>📶 Direct ESP32 IP Mode (192.168.31.190 / 192.168.4.1)</option>
             <option value="demo">🎮 Interactive Demo / Simulation Mode</option>
           </select>
         </div>
 
-        <div class="form-group" id="tunnelUrlGroup">
-          <label>⚡ Cloudflare Tunnel URL</label>
-          <input type="text" id="cfgTunnelUrl" placeholder="e.g. https://medbox.yourdomain.com or https://xxxx.trycloudflare.com" />
-          <small class="help-text">Secure HTTPS URL created via cloudflared pointing to your ESP32</small>
-        </div>
-
         <div class="form-group" id="espIpGroup">
           <label>ESP32 IP Address / Hostname</label>
-          <input type="text" id="cfgEspIp" placeholder="e.g. 192.168.1.100 or 192.168.4.1" />
-          <small class="help-text">Default AP mode IP: 192.168.4.1</small>
+          <input type="text" id="cfgEspIp" placeholder="e.g. 192.168.31.190 or 192.168.4.1" />
+          <small class="help-text">Default IP: 192.168.31.190 | AP mode IP: 192.168.4.1</small>
         </div>
 
         <div class="modal-footer">
@@ -311,7 +303,6 @@
   <!-- Toast Notification Container -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

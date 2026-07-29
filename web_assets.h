@@ -23,7 +23,7 @@ const char HTML_INDEX[] PROGMEM = R"rawliteral(
         <div class="brand-icon">💊</div>
         <div>
           <h1>Smart MedBox</h1>
-          <p class="subtitle">Cloudflare Remote Monitor • mediback.ugsidharth.in</p>
+          <p class="subtitle">IoT Medicine Reminder System & Telemetry Dashboard</p>
         </div>
       </div>
       <div class="header-status">
@@ -213,19 +213,14 @@ const char HTML_INDEX[] PROGMEM = R"rawliteral(
         <div class="form-group">
           <label>Connection Mode</label>
           <select id="cfgMode" onchange="toggleModeInputs()">
-            <option value="tunnel">⚡ Cloudflare Tunnel (https://mediback.ugsidharth.in)</option>
             <option value="cloud">☁️ Cloud Sync (MQTT Broker)</option>
             <option value="esp32">📶 Local ESP32 IP Mode</option>
             <option value="demo">🎮 Simulation Mode</option>
           </select>
         </div>
-        <div class="form-group" id="tunnelUrlGroup">
-          <label>⚡ Cloudflare Tunnel URL</label>
-          <input type="text" id="cfgTunnelUrl" placeholder="https://mediback.ugsidharth.in" />
-        </div>
         <div class="form-group" id="espIpGroup">
           <label>ESP32 IP Address</label>
-          <input type="text" id="cfgEspIp" placeholder="192.168.4.1" />
+          <input type="text" id="cfgEspIp" placeholder="192.168.31.190" />
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeConfigModal()">Close</button>
@@ -236,7 +231,6 @@ const char HTML_INDEX[] PROGMEM = R"rawliteral(
   </div>
 
   <div class="toast-container" id="toastContainer"></div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

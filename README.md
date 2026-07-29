@@ -77,15 +77,6 @@ medicinebox/
 2. Open your website (e.g. `https://medicinebox.ugsidharth.in`).
 3. Click **⚙️ Config** and verify **`☁️ Cloud Sync`** mode is active.
 
-### 4. ⚡ Cloudflare Tunnel (Secure HTTPS Remote Access)
-1. Run [`cloudflared_runner.bat`](file:///c:/Users/Lenovo/Downloads/medicine_reminder_box/medicinebox/cloudflared_runner.bat) or run:
-   ```bash
-   cloudflared tunnel --url http://YOUR_ESP32_IP:80
-   ```
-2. Copy the generated `https://xxxx.trycloudflare.com` URL.
-3. Open the Web Dashboard, click **⚙️ Config**, select **`⚡ Cloudflare Tunnel`**, paste your URL, and click **Save Settings**.
-4. For detailed custom domain setup, read [`CLOUDFLARE_TUNNEL_GUIDE.md`](file:///c:/Users/Lenovo/Downloads/medicine_reminder_box/medicinebox/CLOUDFLARE_TUNNEL_GUIDE.md).
-
 ---
 
 ## 📡 MQTT Cloud Architecture

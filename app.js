@@ -4,9 +4,8 @@
 
 // --- Global State ---
 let config = {
-  mode: localStorage.getItem('medbox_mode') || 'cloud',
-  espIp: localStorage.getItem('medbox_esp_ip') || '192.168.4.1',
-  tunnelUrl: localStorage.getItem('medbox_tunnel_url') || '',
+  mode: localStorage.getItem('medbox_mode') || 'esp32',
+  espIp: localStorage.getItem('medbox_esp_ip') || '192.168.31.190',
   pollInterval: 1500
 };
 
@@ -38,13 +37,6 @@ let historyLog = JSON.parse(localStorage.getItem('medbox_history')) || [
 
 let pollTimer = null;
 let clockTimer = null;
-
-// MQTT Cloud Topics for medicinebox.ugsidharth.in
-const MQTT_TOPIC_TELEMETRY = 'ug_sidharth/medbox/telemetry';
-const MQTT_TOPIC_COMMANDS  = 'ug_sidharth/medbox/commands';
-const MQTT_TOPIC_ALARMS    = 'ug_sidharth/medbox/alarms';
-
-let mqttClient = null;
 
 // --- Initialize App ---
 document.addEventListener('DOMContentLoaded', () => {
@@ -126,30 +118,17 @@ function format12Hour(h, m) {
   return `${hour12}:${minStr} ${period}`;
 }
 
-// --- Network & Cloud Sync Logic ---
+// --- Network Connection Logic ---
 function initNetworkConnection() {
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
   }
-  if (cloudCheckInterval) {
-    clearInterval(cloudCheckInterval);
-    cloudCheckInterval = null;
-  }
-  if (mqttClient) {
-    try { mqttClient.end(); } catch (e) {}
-    mqttClient = null;
-  }
 
-  config.mode = localStorage.getItem('medbox_mode') || (window.location.hostname.includes('ugsidharth.in') ? 'tunnel' : 'cloud');
-  config.espIp = localStorage.getItem('medbox_esp_ip') || '192.168.4.1';
-  config.tunnelUrl = localStorage.getItem('medbox_tunnel_url') || (window.location.protocol.startsWith('http') ? window.location.origin : '');
+  config.mode = localStorage.getItem('medbox_mode') || 'esp32';
+  config.espIp = localStorage.getItem('medbox_esp_ip') || '192.168.31.190';
 
-  if (config.mode === 'cloud') {
-    initMqttCloudSync();
-  } else if (config.mode === 'tunnel') {
-    initTunnelMode();
-  } else if (config.mode === 'esp32') {
+  if (config.mode === 'esp32') {
     initLocalEsp32Mode();
   } else {
     updateConnectionBadge(true, "🎮 Simulation Mode");
@@ -160,161 +139,7 @@ function initLocalEsp32Mode() {
   updateConnectionBadge(true, `Connecting ${config.espIp}...`);
   fetchStatus();
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(fetchStatus, config.pollInterval || 2000);
-}
-
-function initTunnelMode() {
-  if (!config.tunnelUrl && window.location.protocol.startsWith('http')) {
-    config.tunnelUrl = window.location.origin;
-  }
-  if (!config.tunnelUrl) {
-    updateConnectionBadge(false, "⚡ Tunnel URL Missing");
-    return;
-  }
-
-  let baseUrl = config.tunnelUrl.trim().replace(/\/+$/, "");
-  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-    baseUrl = "https://" + baseUrl;
-  }
-  config.cleanTunnelUrl = baseUrl;
-
-  updateConnectionBadge(true, "⚡ Connecting Cloudflare Tunnel...");
-  fetchTunnelStatus();
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(fetchTunnelStatus, config.pollInterval || 2000);
-}
-
-async function fetchTunnelStatus() {
-  if (config.mode !== 'tunnel' || !config.cleanTunnelUrl) return;
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-    const res = await fetch(`${config.cleanTunnelUrl}/api/status`, {
-      mode: 'cors',
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      fetchFailCount = 0;
-      const data = await res.json();
-      telemetry = data;
-      updateTelemetryUI(data);
-      updateConnectionBadge(true, `⚡ Cloudflare Tunnel Active`);
-      fetchAlarmsFromTunnel();
-    } else {
-      updateConnectionBadge(false, `⚡ Tunnel Error (HTTP ${res.status})`);
-    }
-  } catch (err) {
-    fetchFailCount++;
-    updateConnectionBadge(false, `⚡ Tunnel Unreachable`);
-  }
-}
-
-async function fetchAlarmsFromTunnel() {
-  if (config.mode !== 'tunnel' || !config.cleanTunnelUrl) return;
-  try {
-    const res = await fetch(`${config.cleanTunnelUrl}/api/alarms`, { mode: 'cors' });
-    if (res.ok) {
-      const data = await res.json();
-      alarms = data;
-      renderAlarms();
-    }
-  } catch (e) {
-    console.error("Failed to fetch alarms via tunnel:", e);
-  }
-}
-
-let lastMqttTelemetryTime = 0;
-let cloudCheckInterval = null;
-
-const BROKER_ENDPOINTS = [
-  'wss://broker.emqx.io:8084/mqtt',
-  'wss://broker.hivemq.com:8884/mqtt'
-];
-let brokerIndex = 0;
-
-function initMqttCloudSync() {
-  if (typeof mqtt === 'undefined') {
-    updateConnectionBadge(false, "MQTT Library Missing");
-    return;
-  }
-
-  const endpoint = BROKER_ENDPOINTS[brokerIndex % BROKER_ENDPOINTS.length];
-  updateConnectionBadge(true, "Connecting Cloud...");
-  console.log("Connecting Web App to Cloud MQTT Broker:", endpoint);
-
-  try {
-    mqttClient = mqtt.connect(endpoint, {
-      clientId: 'web_dashboard_' + Math.random().toString(16).substr(2, 8),
-      keepalive: 30,
-      reconnectPeriod: 4000
-    });
-
-    if (cloudCheckInterval) clearInterval(cloudCheckInterval);
-
-    mqttClient.on('connect', () => {
-      console.log("✓ Web Dashboard connected to MQTT Cloud:", endpoint);
-      updateConnectionBadge(true, "Cloud Connected (Waiting for ESP32)");
-      mqttClient.subscribe(MQTT_TOPIC_TELEMETRY);
-      mqttClient.subscribe(MQTT_TOPIC_ALARMS);
-
-      // Periodically verify if ESP32 telemetry is actively publishing
-      cloudCheckInterval = setInterval(() => {
-        if (config.mode === 'cloud') {
-          const timeDiff = Date.now() - lastMqttTelemetryTime;
-          if (lastMqttTelemetryTime > 0 && timeDiff < 5000) {
-            updateConnectionBadge(true, "Online (Cloud Sync)");
-          } else if (lastMqttTelemetryTime > 0) {
-            updateConnectionBadge(false, "ESP32 Offline (Check Wi-Fi)");
-          } else {
-            updateConnectionBadge(true, "Cloud Connected (Waiting for ESP32)");
-          }
-        }
-      }, 2000);
-    });
-
-    mqttClient.on('message', (topic, message) => {
-      try {
-        const data = JSON.parse(message.toString());
-        if (topic === MQTT_TOPIC_TELEMETRY) {
-          console.log("📥 MQTT Telemetry Received from ESP32:", data);
-          lastMqttTelemetryTime = Date.now();
-          telemetry = data;
-          updateTelemetryUI(data);
-          updateConnectionBadge(true, "Online (Cloud Sync)");
-        } else if (topic === MQTT_TOPIC_ALARMS) {
-          if (Array.isArray(data) && data.length > 0) {
-            alarms = data;
-            renderAlarms();
-          }
-        }
-      } catch (e) {
-        console.error("Error parsing MQTT payload:", e);
-      }
-    });
-
-    mqttClient.on('error', (err) => {
-      console.error("MQTT Error on endpoint", endpoint, err);
-      updateConnectionBadge(false, "Cloud Error - Retrying...");
-      try { mqttClient.end(); } catch (e) {}
-      brokerIndex++;
-      setTimeout(initMqttCloudSync, 3000);
-    });
-
-    mqttClient.on('offline', () => {
-      updateConnectionBadge(false, "Cloud Offline");
-    });
-  } catch (e) {
-    updateConnectionBadge(false, "Cloud Error");
-  }
-}
-
-function publishMqttMessage(topic, payload) {
-  if (mqttClient && mqttClient.connected) {
-    mqttClient.publish(topic, JSON.stringify(payload));
-  }
+  pollTimer = setInterval(fetchStatus, config.pollInterval || 1500);
 }
 
 let fetchFailCount = 0;
@@ -475,9 +300,7 @@ async function toggleAlarmActive(id, active) {
   const alarm = alarms.find(a => a.id === id);
   if (alarm) {
     alarm.active = active;
-    if (config.mode === 'cloud') {
-      publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
-    } else if (config.mode === 'tunnel' || config.mode === 'esp32') {
+    if (config.mode === 'esp32') {
       await sendAlarmToESP(alarm);
     }
     showToast(`Timer "${alarm.name}" ${active ? 'enabled' : 'disabled'}`, 'info');
@@ -489,13 +312,7 @@ async function deleteAlarm(id) {
   if (!confirm("Are you sure you want to delete this medicine timer?")) return;
 
   alarms = alarms.filter(a => a.id !== id);
-  if (config.mode === 'cloud') {
-    publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
-  } else if (config.mode === 'tunnel' && config.cleanTunnelUrl) {
-    try {
-      await fetch(`${config.cleanTunnelUrl}/api/alarms?id=${id}`, { method: 'DELETE', mode: 'cors' });
-    } catch (e) { console.error("Delete failed via tunnel:", e); }
-  } else if (config.mode === 'esp32') {
+  if (config.mode === 'esp32') {
     try {
       await fetch(`http://${config.espIp}/api/alarms?id=${id}`, { method: 'DELETE', mode: 'cors' });
     } catch (e) {
@@ -532,13 +349,7 @@ async function triggerMarkTaken() {
     updateTelemetryUI(telemetry);
   }, 3000);
 
-  if (config.mode === 'cloud') {
-    publishMqttMessage(MQTT_TOPIC_COMMANDS, { action: "take" });
-  } else if (config.mode === 'tunnel' && config.cleanTunnelUrl) {
-    try {
-      await fetch(`${config.cleanTunnelUrl}/api/take`, { method: 'POST', mode: 'cors' });
-    } catch (e) { console.error(e); }
-  } else if (config.mode === 'esp32') {
+  if (config.mode === 'esp32') {
     try {
       await fetch(`http://${config.espIp}/api/take`, { method: 'POST', mode: 'cors' });
     } catch (e) { console.error(e); }
@@ -584,13 +395,7 @@ async function triggerTestBuzzer() {
     updateTelemetryUI(telemetry);
   }, 1000);
 
-  if (config.mode === 'cloud') {
-    publishMqttMessage(MQTT_TOPIC_COMMANDS, { action: "test_alarm" });
-  } else if (config.mode === 'tunnel' && config.cleanTunnelUrl) {
-    try {
-      await fetch(`${config.cleanTunnelUrl}/api/test-alarm`, { method: 'POST', mode: 'cors' });
-    } catch (e) { console.error(e); }
-  } else if (config.mode === 'esp32') {
+  if (config.mode === 'esp32') {
     try {
       await fetch(`http://${config.espIp}/api/test-alarm`, { method: 'POST', mode: 'cors' });
     } catch (e) { console.error(e); }
@@ -747,37 +552,30 @@ function closeConfigModal() {
 function loadConfigToForm() {
   const modeEl = document.getElementById('cfgMode');
   const ipEl = document.getElementById('cfgEspIp');
-  const tunnelEl = document.getElementById('cfgTunnelUrl');
 
   if (modeEl) modeEl.value = config.mode || 'cloud';
-  if (ipEl) ipEl.value = config.espIp || '192.168.4.1';
-  if (tunnelEl) tunnelEl.value = config.tunnelUrl || '';
+  if (ipEl) ipEl.value = config.espIp || '192.168.31.190';
   toggleModeInputs();
 }
 
 function toggleModeInputs() {
   const modeEl = document.getElementById('cfgMode');
   const ipGroup = document.getElementById('espIpGroup');
-  const tunnelGroup = document.getElementById('tunnelUrlGroup');
   const mode = modeEl ? modeEl.value : 'cloud';
 
   if (ipGroup) ipGroup.style.display = (mode === 'esp32') ? 'block' : 'none';
-  if (tunnelGroup) tunnelGroup.style.display = (mode === 'tunnel') ? 'block' : 'none';
 }
 
 async function saveConfigSubmit(e) {
   if (e && e.preventDefault) e.preventDefault();
   const mode = document.getElementById('cfgMode').value;
   const espIp = document.getElementById('cfgEspIp').value.trim();
-  const tunnelUrl = document.getElementById('cfgTunnelUrl').value.trim();
 
   config.mode = mode;
-  config.espIp = espIp || '192.168.4.1';
-  config.tunnelUrl = tunnelUrl;
+  config.espIp = espIp || '192.168.31.190';
 
   localStorage.setItem('medbox_mode', mode);
   localStorage.setItem('medbox_esp_ip', config.espIp);
-  localStorage.setItem('medbox_tunnel_url', tunnelUrl);
 
   closeConfigModal();
   initNetworkConnection();
