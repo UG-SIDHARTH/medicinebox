@@ -220,7 +220,7 @@ const char HTML_INDEX[] PROGMEM = R"rawliteral(
         </div>
         <div class="form-group" id="espIpGroup">
           <label>ESP32 IP Address</label>
-          <input type="text" id="cfgEspIp" placeholder="192.168.31.190" />
+          <input type="text" id="cfgEspIp" placeholder="192.168.4.1" />
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" onclick="closeConfigModal()">Close</button>

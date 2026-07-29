@@ -1,11 +1,11 @@
 /* ==========================================================================
-   SMART MEDBOX - APPLICATION LOGIC & CLOUD DOMAIN SYNC
+   SMART MEDBOX - APPLICATION LOGIC (DIRECT ESP32 REST API)
    ========================================================================== */
 
-// --- Global State ---
+// --- Global Application State ---
 let config = {
   mode: localStorage.getItem('medbox_mode') || 'esp32',
-  espIp: localStorage.getItem('medbox_esp_ip') || '192.168.31.190',
+  espIp: localStorage.getItem('medbox_esp_ip') || '192.168.4.1',
   pollInterval: 1500
 };
 
@@ -17,28 +17,31 @@ let alarms = [
 
 let telemetry = {
   wifiConnected: true,
-  ip: "192.168.4.1",
-  rssi: -62,
-  time: "08:00:00",
-  date: "2026-07-28",
-  distance: 35.4,
+  ip: "192.168.31.190",
+  rssi: -60,
+  time: "00:00:00",
+  date: "1970-01-01",
+  distance: 35.0,
   boxOpen: false,
   isAlarmActive: false,
   activeAlarmName: "",
+  nextMedName: "",
+  nextMedTime: "",
   greenLed: false,
   redLed: false,
   buzzer: false,
-  takenCount: 1
+  takenCount: 0
 };
 
-let historyLog = JSON.parse(localStorage.getItem('medbox_history')) || [
-  { timestamp: "08:02:15 AM", medicine: "Morning BP Tablet", time: "08:00 AM", method: "Ultrasonic Lid Open", status: "Taken" }
-];
+let historyLog = JSON.parse(localStorage.getItem('medbox_history')) || [];
 
 let pollTimer = null;
 let clockTimer = null;
+let fetchFailCount = 0;
 
-// --- Initialize App ---
+// ==========================================
+// 1. INITIALIZATION & CLOCK
+// ==========================================
 document.addEventListener('DOMContentLoaded', () => {
   loadConfigToForm();
   renderAlarms();
@@ -47,13 +50,19 @@ document.addEventListener('DOMContentLoaded', () => {
   initNetworkConnection();
 });
 
-// --- Clock & Countdown logic ---
 function startClock() {
   if (clockTimer) clearInterval(clockTimer);
   clockTimer = setInterval(() => {
     const now = new Date();
-    document.getElementById('headerTime').innerText = now.toLocaleTimeString();
-    document.getElementById('headerDate').innerText = now.toLocaleDateString();
+    const timeEl = document.getElementById('headerTime');
+    const dateEl = document.getElementById('headerDate');
+
+    if (timeEl && (!telemetry.time || config.mode === 'demo')) {
+      timeEl.innerText = now.toLocaleTimeString();
+    }
+    if (dateEl && (!telemetry.date || config.mode === 'demo')) {
+      dateEl.innerText = now.toLocaleDateString();
+    }
 
     updateCountdown();
   }, 1000);
@@ -68,12 +77,7 @@ function updateCountdown() {
 
   const activeAlarms = alarms.filter(a => a.active);
   if (activeAlarms.length === 0) {
-    document.getElementById('nextMedName').innerText = "No Active Alarms";
-    document.getElementById('nextMedDosage').innerText = "Add a timer to get started";
-    document.getElementById('nextMedTime').innerText = "⏰ --:--";
-    document.getElementById('cdHours').innerText = "00";
-    document.getElementById('cdMins').innerText = "00";
-    document.getElementById('cdSecs').innerText = "00";
+    setNextMedCard("No Active Alarms", "Add a timer to get started", "⏰ --:--", "00", "00", "00");
     return;
   }
 
@@ -89,25 +93,43 @@ function updateCountdown() {
   });
 
   if (nextAlarm) {
-    document.getElementById('nextMedName').innerText = nextAlarm.name;
-    document.getElementById('nextMedDosage').innerText = nextAlarm.dosage || "1 Dose";
-    document.getElementById('nextMedTime').innerText = `⏰ ${format12Hour(nextAlarm.hour, nextAlarm.minute)}`;
-
-    const dot = document.getElementById('nextPillDot');
-    const badge = document.getElementById('nextPillTag');
-    if (dot) dot.style.background = nextAlarm.color;
-    if (badge) {
-      badge.style.background = `${nextAlarm.color}25`;
-      badge.style.color = nextAlarm.color;
-    }
-
     const hours = Math.floor(minDiffSec / 3600);
     const mins = Math.floor((minDiffSec % 3600) / 60);
     const secs = minDiffSec % 60;
 
-    document.getElementById('cdHours').innerText = String(hours).padStart(2, '0');
-    document.getElementById('cdMins').innerText = String(mins).padStart(2, '0');
-    document.getElementById('cdSecs').innerText = String(secs).padStart(2, '0');
+    setNextMedCard(
+      nextAlarm.name,
+      nextAlarm.dosage || "1 Dose",
+      `⏰ ${format12Hour(nextAlarm.hour, nextAlarm.minute)}`,
+      String(hours).padStart(2, '0'),
+      String(mins).padStart(2, '0'),
+      String(secs).padStart(2, '0'),
+      nextAlarm.color
+    );
+  }
+}
+
+function setNextMedCard(name, dosage, timeStr, h, m, s, color = '#3b82f6') {
+  const nameEl = document.getElementById('nextMedName');
+  const dosageEl = document.getElementById('nextMedDosage');
+  const timeEl = document.getElementById('nextMedTime');
+  const hEl = document.getElementById('cdHours');
+  const mEl = document.getElementById('cdMins');
+  const sEl = document.getElementById('cdSecs');
+  const dot = document.getElementById('nextPillDot');
+  const badge = document.getElementById('nextPillTag');
+
+  if (nameEl) nameEl.innerText = name;
+  if (dosageEl) dosageEl.innerText = dosage;
+  if (timeEl) timeEl.innerText = timeStr;
+  if (hEl) hEl.innerText = h;
+  if (mEl) mEl.innerText = m;
+  if (sEl) sEl.innerText = s;
+
+  if (dot) dot.style.background = color;
+  if (badge) {
+    badge.style.background = `${color}25`;
+    badge.style.color = color;
   }
 }
 
@@ -118,7 +140,9 @@ function format12Hour(h, m) {
   return `${hour12}:${minStr} ${period}`;
 }
 
-// --- Network Connection Logic ---
+// ==========================================
+// 2. NETWORK & ESP32 API POLLING
+// ==========================================
 function initNetworkConnection() {
   if (pollTimer) {
     clearInterval(pollTimer);
@@ -126,26 +150,20 @@ function initNetworkConnection() {
   }
 
   config.mode = localStorage.getItem('medbox_mode') || 'esp32';
-  config.espIp = localStorage.getItem('medbox_esp_ip') || '192.168.31.190';
+  config.espIp = localStorage.getItem('medbox_esp_ip') || '192.168.4.1';
 
   if (config.mode === 'esp32') {
-    initLocalEsp32Mode();
+    updateConnectionBadge(true, `Connecting ${config.espIp}...`);
+    fetchStatus();
+    pollTimer = setInterval(fetchStatus, config.pollInterval || 1500);
   } else {
     updateConnectionBadge(true, "🎮 Simulation Mode");
   }
 }
 
-function initLocalEsp32Mode() {
-  updateConnectionBadge(true, `Connecting ${config.espIp}...`);
-  fetchStatus();
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(fetchStatus, config.pollInterval || 1500);
-}
-
-let fetchFailCount = 0;
-
 async function fetchStatus() {
-  if (config.mode !== 'esp32' || window.location.protocol === 'https:') return;
+  if (config.mode !== 'esp32') return;
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3000);
@@ -164,37 +182,73 @@ async function fetchStatus() {
       updateConnectionBadge(true, `Connected (${config.espIp})`);
       fetchAlarmsFromESP();
     } else {
-      updateConnectionBadge(false, "ESP32 Unreachable");
+      handleFetchError(`HTTP ${res.status}`);
     }
   } catch (err) {
-    fetchFailCount++;
-    updateConnectionBadge(false, `Offline (${config.espIp} Timed Out)`);
+    handleFetchError("Unreachable");
+  }
+}
+
+function handleFetchError(reason) {
+  fetchFailCount++;
+  if (fetchFailCount >= 2) {
+    updateConnectionBadge(false, `Offline (${config.espIp})`);
   }
 }
 
 async function fetchAlarmsFromESP() {
-  if (config.mode !== 'esp32' || window.location.protocol === 'https:') return;
+  if (config.mode !== 'esp32') return;
+
   try {
     const res = await fetch(`http://${config.espIp}/api/alarms`, { mode: 'cors' });
     if (res.ok) {
       const data = await res.json();
-      alarms = data;
-      renderAlarms();
+      if (Array.isArray(data)) {
+        alarms = data;
+        renderAlarms();
+      }
     }
   } catch (e) {
-    console.error("Failed to fetch alarms:", e);
+    console.error("Failed to fetch alarms from ESP32:", e);
   }
 }
 
+async function sendAlarmToESP(alarm) {
+  if (config.mode !== 'esp32') return;
+
+  try {
+    const formData = new URLSearchParams();
+    formData.append('id', alarm.id);
+    formData.append('name', alarm.name);
+    formData.append('hour', alarm.hour);
+    formData.append('minute', alarm.minute);
+    formData.append('dosage', alarm.dosage || '1 Dose');
+    formData.append('color', alarm.color || '#3b82f6');
+    formData.append('active', alarm.active ? 'true' : 'false');
+
+    await fetch(`http://${config.espIp}/api/alarms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData,
+      mode: 'cors'
+    });
+  } catch (e) {
+    console.error("Failed to send alarm to ESP32:", e);
+  }
+}
+
+// ==========================================
+// 3. UI UPDATING & RENDERING
+// ==========================================
 function updateConnectionBadge(isConnected, label) {
   const badge = document.getElementById('connectionBadge');
   const text = document.getElementById('connectionText');
-  
+
   let cls = 'demo-mode';
-  if (config.mode === 'cloud' || config.mode === 'esp32' || config.mode === 'tunnel') {
+  if (config.mode === 'esp32') {
     cls = isConnected ? 'connected' : 'disconnected';
   }
-  
+
   if (badge) badge.className = 'connection-badge ' + cls;
   if (text) text.innerText = label;
 }
@@ -243,21 +297,18 @@ function updateTelemetryUI(data) {
   if (data.date && document.getElementById('headerDate')) {
     document.getElementById('headerDate').innerText = data.date;
   }
-  if (data.nextMedName && data.nextMedName !== "No Alarms") {
-    const nextNameEl = document.getElementById('nextMedName');
-    const nextTimeEl = document.getElementById('nextMedTime');
-    if (nextNameEl) nextNameEl.innerText = data.nextMedName;
-    if (nextTimeEl) nextTimeEl.innerText = `⏰ ${data.nextMedTime}`;
-  }
 
   const totalAlarms = alarms.length;
   const takenCount = data.takenCount || 0;
-  document.getElementById('intakeRatio').innerText = `${takenCount} / ${totalAlarms} Taken`;
-  const intakePct = totalAlarms > 0 ? Math.min(100, (takenCount / totalAlarms) * 100) : 0;
-  document.getElementById('intakeBar').style.width = `${intakePct}%`;
+  const ratioEl = document.getElementById('intakeRatio');
+  const barEl = document.getElementById('intakeBar');
+  if (ratioEl) ratioEl.innerText = `${takenCount} / ${totalAlarms} Taken`;
+  if (barEl) {
+    const intakePct = totalAlarms > 0 ? Math.min(100, (takenCount / totalAlarms) * 100) : 0;
+    barEl.style.width = `${intakePct}%`;
+  }
 }
 
-// --- Render Alarms Grid ---
 function renderAlarms() {
   const container = document.getElementById('timersGrid');
   if (!container) return;
@@ -292,10 +343,12 @@ function renderAlarms() {
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// --- Actions & API Invocation ---
+// ==========================================
+// 4. ALARM ACTIONS & HARDWARE CONTROLS
+// ==========================================
 async function toggleAlarmActive(id, active) {
   const alarm = alarms.find(a => a.id === id);
   if (alarm) {
@@ -326,8 +379,7 @@ async function deleteAlarm(id) {
 async function triggerMarkTaken() {
   const now = new Date();
   const timeStr = now.toLocaleTimeString();
-
-  const nextMedName = document.getElementById('nextMedName').innerText;
+  const nextMedName = document.getElementById('nextMedName')?.innerText || 'General Medicine';
 
   historyLog.unshift({
     timestamp: timeStr,
@@ -383,6 +435,7 @@ function playBrowserAudioBeep(durationMs = 1000) {
 async function triggerTestBuzzer() {
   showToast("🔔 Active Buzzer (GPIO 25) & LED Test Triggered", 'info');
   playBrowserAudioBeep(1000);
+
   telemetry.redLed = true;
   telemetry.greenLed = true;
   telemetry.buzzer = true;
@@ -402,7 +455,9 @@ async function triggerTestBuzzer() {
   }
 }
 
-// --- Alarm Modal Management ---
+// ==========================================
+// 5. MODAL & FORM HANDLERS
+// ==========================================
 function openAddModal() {
   document.getElementById('modalTitle').innerText = "Add Medicine Timer";
   document.getElementById('formAlarmId').value = "0";
@@ -424,10 +479,10 @@ function openEditModal(id) {
   document.getElementById('formMinute').value = alarm.minute;
   document.getElementById('formDosage').value = alarm.dosage || "";
 
-  const radios = document.getElementsByName('formColor');
-  for (let r of radios) {
-    if (r.value === alarm.color) r.checked = true;
-  }
+  const colorRadios = document.getElementsByName('formColor');
+  colorRadios.forEach(r => {
+    r.checked = (r.value === alarm.color);
+  });
 
   document.getElementById('alarmModal').classList.add('active');
 }
@@ -436,79 +491,50 @@ function closeAlarmModal() {
   document.getElementById('alarmModal').classList.remove('active');
 }
 
-async function saveAlarmSubmit(event) {
-  event.preventDefault();
+async function saveAlarmSubmit(e) {
+  if (e && e.preventDefault) e.preventDefault();
+
   const id = parseInt(document.getElementById('formAlarmId').value) || 0;
   const name = document.getElementById('formName').value.trim();
   const hour = parseInt(document.getElementById('formHour').value);
   const minute = parseInt(document.getElementById('formMinute').value);
-  const dosage = document.getElementById('formDosage').value.trim() || "1 Dose";
-  const color = document.querySelector('input[name="formColor"]:checked').value;
+  const dosage = document.getElementById('formDosage').value.trim();
 
-  if (isNaN(hour) || hour < 0 || hour > 23 || isNaN(minute) || minute < 0 || minute > 59) {
-    showToast("Please enter valid hour (0-23) and minute (0-59)", "error");
+  let color = '#3b82f6';
+  const colorRadios = document.getElementsByName('formColor');
+  colorRadios.forEach(r => { if (r.checked) color = r.value; });
+
+  if (!name || isNaN(hour) || isNaN(minute)) {
+    showToast("Please fill in all required fields", "warning");
     return;
   }
 
-  let alarm;
-  if (id > 0) {
-    alarm = alarms.find(a => a.id === id);
+  if (id === 0) {
+    const newId = alarms.length > 0 ? Math.max(...alarms.map(a => a.id)) + 1 : 1;
+    const newAlarm = { id: newId, name, hour, minute, dosage, color, active: true };
+    alarms.push(newAlarm);
+    if (config.mode === 'esp32') await sendAlarmToESP(newAlarm);
+    showToast(`Timer "${name}" created!`, "success");
+  } else {
+    const alarm = alarms.find(a => a.id === id);
     if (alarm) {
       alarm.name = name;
       alarm.hour = hour;
       alarm.minute = minute;
       alarm.dosage = dosage;
       alarm.color = color;
+      if (config.mode === 'esp32') await sendAlarmToESP(alarm);
+      showToast(`Timer "${name}" updated!`, "success");
     }
-  } else {
-    const newId = alarms.length > 0 ? Math.max(...alarms.map(a => a.id)) + 1 : 1;
-    alarm = { id: newId, name, hour, minute, dosage, color, active: true };
-    alarms.push(alarm);
-  }
-
-  if (config.mode === 'cloud') {
-    publishMqttMessage(MQTT_TOPIC_ALARMS, alarms);
-  } else if (config.mode === 'tunnel' || config.mode === 'esp32') {
-    await sendAlarmToESP(alarm);
   }
 
   closeAlarmModal();
   renderAlarms();
-  showToast(id > 0 ? "Timer updated successfully!" : "New medicine timer created!", "success");
 }
 
-async function sendAlarmToESP(alarm) {
-  const formData = new URLSearchParams();
-  formData.append('id', alarm.id);
-  formData.append('name', alarm.name);
-  formData.append('hour', alarm.hour);
-  formData.append('minute', alarm.minute);
-  formData.append('dosage', alarm.dosage);
-  formData.append('color', alarm.color);
-  formData.append('active', alarm.active ? '1' : '0');
-
-  let targetUrl = '';
-  if (config.mode === 'tunnel' && config.cleanTunnelUrl) {
-    targetUrl = `${config.cleanTunnelUrl}/api/alarms`;
-  } else if (config.mode === 'esp32' && window.location.protocol !== 'https:') {
-    targetUrl = `http://${config.espIp}/api/alarms`;
-  } else {
-    return;
-  }
-
-  try {
-    await fetch(targetUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: formData,
-      mode: 'cors'
-    });
-  } catch (e) {
-    console.error("Failed to send alarm to ESP32:", e);
-  }
-}
-
-// --- History Log Management ---
+// ==========================================
+// 6. HISTORY LOG & CONFIG MODAL
+// ==========================================
 function renderHistoryLog() {
   const tbody = document.getElementById('historyTableBody');
   if (!tbody) return;
@@ -540,7 +566,6 @@ function clearHistoryLog() {
   showToast("History log cleared", "info");
 }
 
-// --- Config Modal Management ---
 function openConfigModal() {
   document.getElementById('configModal').classList.add('active');
 }
@@ -553,26 +578,27 @@ function loadConfigToForm() {
   const modeEl = document.getElementById('cfgMode');
   const ipEl = document.getElementById('cfgEspIp');
 
-  if (modeEl) modeEl.value = config.mode || 'cloud';
-  if (ipEl) ipEl.value = config.espIp || '192.168.31.190';
+  if (modeEl) modeEl.value = config.mode || 'esp32';
+  if (ipEl) ipEl.value = config.espIp || '192.168.4.1';
   toggleModeInputs();
 }
 
 function toggleModeInputs() {
   const modeEl = document.getElementById('cfgMode');
   const ipGroup = document.getElementById('espIpGroup');
-  const mode = modeEl ? modeEl.value : 'cloud';
+  const mode = modeEl ? modeEl.value : 'esp32';
 
   if (ipGroup) ipGroup.style.display = (mode === 'esp32') ? 'block' : 'none';
 }
 
 async function saveConfigSubmit(e) {
   if (e && e.preventDefault) e.preventDefault();
+
   const mode = document.getElementById('cfgMode').value;
   const espIp = document.getElementById('cfgEspIp').value.trim();
 
   config.mode = mode;
-  config.espIp = espIp || '192.168.31.190';
+  config.espIp = espIp || '192.168.4.1';
 
   localStorage.setItem('medbox_mode', mode);
   localStorage.setItem('medbox_esp_ip', config.espIp);
@@ -582,7 +608,9 @@ async function saveConfigSubmit(e) {
   showToast(`Settings Saved (${mode.toUpperCase()} mode)`, "success");
 }
 
-// --- Toast Utilities ---
+// ==========================================
+// 7. TOAST UTILITY
+// ==========================================
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
